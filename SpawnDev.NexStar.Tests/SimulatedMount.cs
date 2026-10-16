@@ -35,7 +35,7 @@ internal sealed class SimulatedMount : INexStarTransport
     public double GotoSpeed { get; set; } = 3.0;
 
     /// <summary>Fixed slew rate 0..9 in simulated degrees per second.</summary>
-    public double[] FixedRates { get; } = { 0, 0.01, 0.02, 0.05, 0.1, 0.3, 0.7, 1.2, 2.0, 3.0 };
+    public double[] FixedRates { get; } = NexStarProtocol.MeasuredFixedRateDegreesPerSecond.ToArray();
 
     /// <summary>Azimuth drift while tracking, simulated degrees per second (0.004 is the sidereal worst case).</summary>
     public double TrackingDrift { get; set; }

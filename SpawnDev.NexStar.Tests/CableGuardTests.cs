@@ -210,6 +210,39 @@ public class CableGuardTests
     }
 
     [TestMethod]
+    public void RateLadder_FollowsTheMeasuredSpeeds_NotAGuess()
+    {
+        // Real 127SLT speeds (deg/s): R7 1.0, R8 1.75, R9 about 3. The room each rate needs is (speed * 1.2 s + 2 degrees) * 2.5.
+        SlewRate At(double room) => NewGuard(0, 200, 200 - room).MaxFixedRate(true);
+        Check.Equal(SlewRate.Rate9, At(100), "plenty of room: full speed");
+        Check.Equal(SlewRate.Rate9, At(14.06), "rate 9 needs (3.0*1.2+2)*2.5 = 14 degrees (plus the 0.05 limit tolerance)");
+        Check.Equal(SlewRate.Rate8, At(13.9), "just under: one step down");
+        Check.Equal(SlewRate.Rate7, At(10.2), "rate 8 needs (1.75*1.2+2)*2.5 = 10.25");
+        Check.That(At(10) <= SlewRate.Rate8 && At(10) >= SlewRate.Rate7, $"10 degrees: {At(10)}");
+        Check.That(At(6.0) <= SlewRate.Rate6, $"6 degrees: {At(6.0)}");
+        Check.That(At(5.4) >= SlewRate.Rate1 && At(5.4) < SlewRate.Rate7, $"5.4 degrees leaves a creep: {At(5.4)}");
+        Check.Equal(SlewRate.Stop, At(5.0), "under what even rate 1 needs (5.0 degrees): stop");
+        Check.Equal(SlewRate.Stop, At(0.0), "at the limit");
+        // monotone: more room never means a slower rate
+        SlewRate prev = SlewRate.Stop;
+        for (double room = 0; room <= 60; room += 0.25)
+        {
+            var r = At(room);
+            Check.That(r >= prev, $"room {room}: {r} after {prev}");
+            prev = r;
+        }
+        // the way away from a limit is always free
+        Check.Equal(SlewRate.Rate9, NewGuard(0, 200, 200).MaxFixedRate(false), "turning back from the limit");
+        // and every allowed rate stops inside the limit
+        for (double room = 0.1; room <= 60; room += 0.1)
+        {
+            var g = NewGuard(0, 200, 200 - room);
+            var r = g.MaxFixedRate(true);
+            if (r != SlewRate.Stop) Check.That(g.StoppingDistance(r) < room, $"room {room}: rate {r} stops in {g.StoppingDistance(r):F2}");
+        }
+    }
+
+    [TestMethod]
     public void TimeToLimit_ForTrackingDrift()
     {
         var g = NewGuard(startAz: 100, cumulative: 100);

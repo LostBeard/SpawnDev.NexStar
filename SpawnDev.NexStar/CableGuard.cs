@@ -37,6 +37,20 @@ namespace SpawnDev.NexStar
         public double MaxSlewDegreesPerSecond { get; set; } = 5.0;
 
         /// <summary>
+        /// How fast each fixed slew rate turns the azimuth, degrees per second (index 0-9). Defaults to what was measured on a 127SLT.
+        /// </summary>
+        public IReadOnlyList<double> FixedRateDegreesPerSecond { get; set; } = NexStarProtocol.MeasuredFixedRateDegreesPerSecond;
+
+        /// <summary>Seconds a stop takes to take effect: one poll, the command's round trip and the deceleration.</summary>
+        public double StopTimeSeconds { get; set; } = 1.2;
+
+        /// <summary>Degrees kept in hand beyond the stopping distance.</summary>
+        public double StopMarginDegrees { get; set; } = 2.0;
+
+        /// <summary>A rate is allowed only while the room left is this many times its stopping distance, so speed falls away before the limit.</summary>
+        public double SlowdownFactor { get; set; } = 2.5;
+
+        /// <summary>
         /// Longest single goto step, degrees. Must stay well under 180: the mount then takes the short way round for every step, so the route
         /// is the one planned (see <see cref="CableGuard.PlanGoto"/>).
         /// </summary>
@@ -328,10 +342,18 @@ namespace SpawnDev.NexStar
             }
         }
 
+        /// <summary>The distance the azimuth keeps turning after a stop is ordered at a fixed rate, degrees.</summary>
+        public double StoppingDistance(SlewRate rate)
+        {
+            var table = Options.FixedRateDegreesPerSecond;
+            var speed = (int)rate >= 0 && (int)rate < table.Count ? table[(int)rate] : table[^1];
+            return speed * Options.StopTimeSeconds + Options.StopMarginDegrees;
+        }
+
         /// <summary>
-        /// The fastest fixed slew rate the cable may be moved at toward a limit, by the room left: free in the middle, stepping down through the
-        /// warning margin and to <see cref="SlewRate.Stop"/> at the limit. Moving away from a limit is free. This needs no knowledge of how fast
-        /// each rate is, only that rates are ordered.
+        /// The fastest fixed slew rate the cable may be moved at toward a limit: the highest rate whose stopping distance (speed times the time a stop takes,
+        /// plus a margin) is under the room left divided by <see cref="CableGuardOptions.SlowdownFactor"/>. Full speed in the middle, stepping down as the
+        /// limit nears, <see cref="SlewRate.Stop"/> when not even a creep fits. Moving away from a limit is free.
         /// </summary>
         /// <param name="positive">True for azimuth increasing</param>
         public SlewRate MaxFixedRate(bool positive)
@@ -340,14 +362,13 @@ namespace SpawnDev.NexStar
             {
                 if (!Options.Enabled) return SlewRate.Rate9;
                 if (State.Uncertain && !Options.AllowWhenUncertain) return SlewRate.Stop;
-                var room = positive ? RoomPositive : RoomNegative;
-                var margin = Options.WarnMarginDegrees;
-                if (room <= LimitEpsilonDegrees) return SlewRate.Stop;
-                if (room >= 2 * margin) return SlewRate.Rate9;
-                if (room >= margin) return SlewRate.Rate7;
-                if (room >= margin / 2) return SlewRate.Rate5;
-                if (room >= margin / 6) return SlewRate.Rate3;
-                return SlewRate.Rate1;
+                var room = (positive ? RoomPositive : RoomNegative) - LimitEpsilonDegrees;
+                if (room <= 0) return SlewRate.Stop;
+                for (int r = (int)SlewRate.Rate9; r >= (int)SlewRate.Rate1; r--)
+                {
+                    if (room >= StoppingDistance((SlewRate)r) * Options.SlowdownFactor) return (SlewRate)r;
+                }
+                return SlewRate.Stop;
             }
         }
 

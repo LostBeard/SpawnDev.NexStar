@@ -22,6 +22,14 @@ namespace SpawnDev.NexStar
         private const double Revolution32 = 4294967296.0;
 
         /// <summary>
+        /// How fast each fixed slew rate (index 0-9, 0 = stopped) turns an axis, degrees per second, MEASURED on a Celestron 127SLT (hand control 5.35) on
+        /// 2026-10-16 by timing the position over 1-3 second slews: 1 is 0.002 (a quarter of the sidereal rate), 5 is 0.067, 7 is one degree a second.
+        /// Rate 9 was only run for 0.7 s, long enough to ramp to 2.4; goto speeds reached 3.06, and the protocol document says 3 degrees per second for GT
+        /// mounts, so 9 is entered as 3.0 (the safe side for a stopping distance). Other models differ: measure before relying on it.
+        /// </summary>
+        public static readonly IReadOnlyList<double> MeasuredFixedRateDegreesPerSecond = new[] { 0.0, 0.002, 0.004, 0.017, 0.033, 0.067, 0.267, 1.0, 1.75, 3.0 };
+
+        /// <summary>
         /// The largest variable slew rate the protocol can carry: the rate times 4 must fit in two bytes.
         /// </summary>
         public const double MaxVariableSlewArcsecPerSec = 65535 / 4.0;

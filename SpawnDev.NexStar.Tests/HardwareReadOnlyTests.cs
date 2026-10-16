@@ -13,58 +13,6 @@ namespace SpawnDev.NexStar.Tests;
 /// </summary>
 public class HardwareReadOnlyTests
 {
-    /// <summary>One hardware test at a time across processes: a COM port has a single owner.</summary>
-    private sealed class MountLease : IAsyncDisposable
-    {
-        // A file opened with no sharing is a lock that works across processes and, unlike a Mutex, does not care
-        // which thread an async test resumes on. The OS drops it if the process dies.
-        private readonly FileStream _lock;
-        public SystemSerialTransport Transport { get; }
-
-        private MountLease(FileStream lockFile, SystemSerialTransport transport)
-        {
-            _lock = lockFile;
-            Transport = transport;
-        }
-
-        public static async Task<MountLease> AcquireAsync()
-        {
-            if (Environment.GetEnvironmentVariable("NEXSTAR_HARDWARE") == "0")
-                throw new UnsupportedTestException("NEXSTAR_HARDWARE=0");
-            var path = Path.Combine(Path.GetTempPath(), "SpawnDev.NexStar.Hardware.lock");
-            FileStream? lockFile = null;
-            var waited = Stopwatch.StartNew();
-            while (lockFile == null)
-            {
-                try
-                {
-                    lockFile = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-                }
-                catch (IOException) when (waited.Elapsed < TimeSpan.FromMinutes(3))
-                {
-                    await Task.Delay(250);
-                }
-                catch (IOException)
-                {
-                    throw new UnsupportedTestException("another test held the mount for more than 3 minutes");
-                }
-            }
-            var transport = await SystemSerialTransport.FindMountAsync();
-            if (transport == null)
-            {
-                await lockFile.DisposeAsync();
-                throw new UnsupportedTestException("no NexStar hand control answered on any serial port (is it powered and plugged in, and is a browser holding the port?)");
-            }
-            return new MountLease(lockFile, transport);
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await Transport.DisposeAsync();
-            await _lock.DisposeAsync();
-        }
-    }
-
     [TestMethod]
     public async Task Mount_AnswersEveryReadOnlyQuery_WithSaneValues()
     {

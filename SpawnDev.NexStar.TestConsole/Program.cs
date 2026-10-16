@@ -17,6 +17,7 @@ services.AddSingleton<CableGuardTests>();
 services.AddSingleton<GuardedMotionTests>();
 services.AddSingleton<AstronomyMathTests>();
 services.AddSingleton<HardwareReadOnlyTests>();
+services.AddSingleton<HardwareMotionTests>();
 var sp = services.BuildServiceProvider();
 var runner = new UnitTestRunner(sp, true);
 await ConsoleRunner.Run(args, runner);

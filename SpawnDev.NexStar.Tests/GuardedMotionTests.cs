@@ -26,6 +26,8 @@ public class GuardedMotionTests
             Check.That(await rig.Service.AttachTransportAsync(mount), "attach");
             // the guard's speed limit must cover the simulated speed, which is scale times faster than a real mount
             rig.Service.Cable.Options.MaxSlewDegreesPerSecond = 3.0 * scale * 1.7;
+            // the same for the rate table: at scale x everything moves x times faster, so a stop takes x times the distance
+            rig.Service.Cable.Options.FixedRateDegreesPerSecond = NexStarProtocol.MeasuredFixedRateDegreesPerSecond.Select(v => v * scale).ToArray();
             rig.Service.Cable.Options.LimitDegrees = 200;
             rig.Service.GotoPollInterval = TimeSpan.FromMilliseconds(60);
             rig.Service.Cable.Confirm(cumulative, ((cumulative % 360) + 360) % 360, DateTime.UtcNow);
@@ -129,20 +131,50 @@ public class GuardedMotionTests
     }
 
     [TestMethod]
-    public async Task Slew_IsStoppedByTheMonitor_BeforeTheLimit()
+    public async Task Slew_NearTheLimit_StepsDownToACreep_AndNeverReachesIt()
     {
-        // Start 1.5 degrees from the limit and hold the button: the monitor must end it before the limit, by itself.
-        var rig = await Rig.StartAsync(scale: 40, cumulative: 198.5);
+        // 12 degrees from the limit at 40x: only a slow rate may start, and the rate keeps stepping down as the room shrinks, so the approach
+        // is asymptotic: hold the button as long as you like and the cable does not get there (the real rate 1 is 0.002 degrees a second).
+        var rig = await Rig.StartAsync(scale: 40, cumulative: 188);
         var start = await rig.Service.BeginAzimuthSlewAsync(SlewDirection.Positive, SlewRate.Rate9);
         Check.That(start.Started && start.Rate < SlewRate.Rate9, $"started, slowed: {start.Rate} {start.Reason}");
-        var waited = 0;
-        while (rig.Service.GuardedMotionActive && waited++ < 150) await Task.Delay(100);
-        Check.That(!rig.Service.GuardedMotionActive, "the monitor ended the slew");
+        await Task.Delay(9000);
+        var here = rig.Mount.TrueNow();
         await rig.Service.StopGuardedSlewAsync();
-        var final = rig.Mount.TrueNow();
-        Check.That(final < 200 && final > 198, $"stopped just inside the limit: {final:F2}");
-        Check.That(rig.Mount.MaxExcursion < 200, $"never reached it ({rig.Mount.MaxExcursion:F2})");
+        Check.That(here > 190 && here < 198, $"moved well in, and not to the limit: {here:F2}");
+        Check.That(rig.Mount.MaxExcursion < 199, $"never near it ({rig.Mount.MaxExcursion:F2})");
+        var rates = rig.Mount.SlewRatesSent.Where(r => r > 0).ToList();
+        Check.That(rates.Zip(rates.Skip(1), (a, b) => b <= a).All(x => x), $"the rate only ever stepped down: {string.Join(",", rates)}");
+        Check.That(rates.Distinct().Count() >= 3, $"through several steps: {string.Join(",", rates)}");
+    }
+
+    [TestMethod]
+    public async Task Slew_AtFullSpeed_IsCaughtByTheMonitor_IfTheLimitIsNearer_ThanTheLadderThought()
+    {
+        // The belt to the braces: even if a slew is running faster than the table says (a mount that differs from the 127SLT), the monitor measures the
+        // real speed and stops it before the limit. Here the guard is told rates are 4 times slower than they are.
+        // (scale 10, not 40: the monitor's polling and command latency are real time, and at 40x one poll would cover 24 degrees, which no real mount does)
+        var rig = await Rig.StartAsync(scale: 10, cumulative: 150);
+        rig.Service.Cable.Options.FixedRateDegreesPerSecond = NexStarProtocol.MeasuredFixedRateDegreesPerSecond.Select(v => v * 10 / 4).ToArray(); // believes it is 4 times slower than it is
+        var start = await rig.Service.BeginAzimuthSlewAsync(SlewDirection.Positive, SlewRate.Rate9);
+        Check.That(start.Started, "started");
+        var waited = 0;
+        while (rig.Service.GuardedMotionActive && waited++ < 100) await Task.Delay(100);
+        Check.That(!rig.Service.GuardedMotionActive, "the monitor ended the slew on the measured speed");
+        await rig.Service.StopGuardedSlewAsync();
+        Check.That(rig.Mount.MaxExcursion < 200, $"and it did not reach the limit ({rig.Mount.MaxExcursion:F1})");
         Check.That(rig.Alerts.Any(a => a.Kind == CableAlertKind.LimitReached), "and said so");
+    }
+
+    [TestMethod]
+    public async Task Slew_TooCloseToTheLimit_ToStopInTime_IsRefused()
+    {
+        // 1.5 degrees from the limit even a creep cannot be stopped inside it with the margin the guard keeps: only the way back is open.
+        var rig = await Rig.StartAsync(scale: 40, cumulative: 198.5);
+        var into = await rig.Service.BeginAzimuthSlewAsync(SlewDirection.Positive, SlewRate.Rate1);
+        Check.That(!into.Started, $"refused: {into.Reason}");
+        Check.That((await rig.Service.BeginAzimuthSlewAsync(SlewDirection.Negative, SlewRate.Rate9)).Started, "the way back is free at full speed");
+        await rig.Service.StopGuardedSlewAsync();
     }
 
     [TestMethod]

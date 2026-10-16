@@ -72,6 +72,17 @@ The hand control and power cord run to the part of the mount that turns. The mou
 - **A sync moves the reading, not the cable.** After a sync or alignment the next reading is taken as a new baseline.
 - **Out of sight.** A slew does not end by itself: if the page dies, the mount keeps going. For remote use, drive it with `JogAsync`: each step ends by itself.
 
+### Measured on a real 127SLT (hand control 5.35, unaligned)
+
+The routing rules rest on measurements, not assumptions (`SpawnDev.NexStar.Probe`, and the motion tests in `HardwareMotionTests`):
+
+- A goto **starts the short way round** for every turn tried up to 170 degrees both ways. The mount's cut-over is not exactly 180: it goes up for turns up to about +182.5 and down only up to about -177.5. The guard's steps are at most 150 degrees, 27 degrees inside that.
+- Gotos work on an unaligned mount (Az/Alt are raw encoder angles relative to the power-on direction), land within about 0.005 degrees, and run at up to about 3 degrees a second.
+- A fixed-rate slew with **positive** direction turns the azimuth **up**. Speeds in degrees per second, rates 1 to 9: 0.002, 0.004, 0.017, 0.033, 0.067, 0.27, 1.0, 1.75, about 3 (`NexStarProtocol.MeasuredFixedRateDegreesPerSecond`). The slow-down ladder is built from these, not guessed.
+- No fixed azimuth stop was found. Celestron's hand control has an optional **Cordwrap** setting (Scope Setup, off by default) that defines a "no-cross line" the scope will not slew over; see [Celestron: What is cordwrap?](https://www.celestron.com/blogs/knowledgebase/what-is-cordwrap-how-can-i-prevent-it). Whether it is on cannot be read over the serial protocol; the guard works the same either way.
+
+Other models, or other firmware, may differ: re-run the probe stages before trusting these numbers.
+
 ## Tests
 
 Run through PlaywrightMultiTest (`dotnet test PlaywrightMultiTest`). The suite covers the framing, codecs, clock, command channel, the service over a protocol simulator, the cable guard over a physical mount simulator, and the astronomy against JPL Horizons. The hardware tests talk to a real mount on a desktop serial port (`NEXSTAR_PORT`, or auto-detected) and are **read-only**; they report as unsupported when no mount answers.
