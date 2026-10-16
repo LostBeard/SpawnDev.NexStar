@@ -168,4 +168,56 @@ public class HardwareMotionTests
             await service.DeselectPortAsync();
         }
     }
+
+    [TestMethod(Timeout = 300_000)]
+    public async Task FixedSlews_AltitudeDirectionAndSpeed_AreMeasured_AndTheTubeReturns()
+    {
+        await using var lease = await MountLease.AcquireAsync(needsMotion: true);
+        var (service, startAz, startAlt) = await ConnectAsync(lease);
+        var report = new List<string>();
+        try
+        {
+            // from level or parked, raise the tube to 10 degrees first (up is the safe way: the test then goes both ways from there and puts it back)
+            if (startAlt < 5)
+            {
+                Check.That(await service.GotoAzAltAsync(startAz, 10, precise: true), "goto to 10 degrees");
+                await WaitGotoAsync(service, 40);
+            }
+            Check.That((await service.GetAzAltAsync(precise: true))!.Altitude is > 5 and < 80, "the tube has room both ways to run this");
+            foreach (var rate in new[] { SlewRate.Rate5, SlewRate.Rate6 })
+            {
+                foreach (var dir in new[] { SlewDirection.Positive, SlewDirection.Negative })
+                {
+                    var before = (await service.GetAzAltAsync(precise: true))!.Altitude;
+                    Check.That(await service.SlewFixedAsync(SlewAxis.DecAlt, dir, rate), "slew accepted");
+                    var clock = Stopwatch.StartNew();
+                    var samples = new List<(double t, double alt)>();
+                    // at most 2.5 seconds, and never more than 0.8 degrees from where it started
+                    while (clock.Elapsed.TotalSeconds < 2.5 && Math.Abs((samples.Count > 0 ? samples[^1].alt : before) - before) < 0.8)
+                    {
+                        var p = await service.GetAzAltAsync(precise: true);
+                        if (p != null) samples.Add((clock.Elapsed.TotalSeconds, p.Altitude));
+                        await Task.Delay(40);
+                    }
+                    await service.StopAllSlewAsync();
+                    await SettleAsync(service);
+                    var after = (await service.GetAzAltAsync(precise: true))!.Altitude;
+                    var moved = after - before;
+                    var tail = samples.Where(x => x.t > samples[^1].t * 0.4).ToList();
+                    var speed = tail.Count > 1 ? Math.Abs(tail[^1].alt - tail[0].alt) / (tail[^1].t - tail[0].t) : 0;
+                    report.Add($"{rate} {dir}: altitude changed {moved:+0.000;-0.000} deg, about {speed:F3} deg/s (table says {NexStarProtocol.MeasuredFixedRateDegreesPerSecond[(int)rate]})");
+                    Check.That(Math.Abs(moved) > 0.05, $"{rate} {dir} did not move the tube: {string.Join(" | ", report)}");
+                    Check.That((dir == SlewDirection.Positive) == (moved > 0), $"positive must raise the tube: {string.Join(" | ", report)}");
+                }
+            }
+            Console.WriteLine("[HardwareMotion] altitude: " + string.Join(" | ", report));
+        }
+        finally
+        {
+            await StopEverythingAsync(service);
+            await service.GotoAzAltAsync(startAz, startAlt, precise: true);
+            await WaitGotoAsync(service, 30);
+            await service.DeselectPortAsync();
+        }
+    }
 }
