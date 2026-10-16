@@ -1,11 +1,11 @@
 {
-  "name": "SpawnDev NexStar",
-  "short_name": "SpawnDev NexStar",
+  "name": "NexStar telescope control",
+  "short_name": "NexStar",
   "id": "./",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#03173d",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "prefer_related_applications": false,
   "icons": [
     {
