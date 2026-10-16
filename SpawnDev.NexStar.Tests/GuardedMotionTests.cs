@@ -1,3 +1,4 @@
+using SpawnDev.NexStar.Simulation;
 using SpawnDev.UnitTesting;
 
 namespace SpawnDev.NexStar.Tests;

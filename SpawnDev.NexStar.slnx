@@ -3,6 +3,7 @@
   <Project Path="SpawnDev.NexStar/SpawnDev.NexStar.csproj" />
   <Project Path="SpawnDev.NexStar.Desktop/SpawnDev.NexStar.Desktop.csproj" />
   <Project Path="SpawnDev.NexStar.Sky/SpawnDev.NexStar.Sky.csproj" />
+  <Project Path="SpawnDev.NexStar.Simulator/SpawnDev.NexStar.Simulator.csproj" />
   <Project Path="SpawnDev.NexStar.CatalogBuilder/SpawnDev.NexStar.CatalogBuilder.csproj" />
   <Project Path="SpawnDev.NexStar.Probe/SpawnDev.NexStar.Probe.csproj" />
   <Project Path="SpawnDev.NexStar.Shot/SpawnDev.NexStar.Shot.csproj" />

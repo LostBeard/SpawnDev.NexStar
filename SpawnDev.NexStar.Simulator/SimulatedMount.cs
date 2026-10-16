@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 
-namespace SpawnDev.NexStar.Tests;
+namespace SpawnDev.NexStar.Simulation;
 
 /// <summary>
 /// A hand control with a body: it moves. Gotos run at a speed in the direction its policy picks (the short way, or deliberately NOT),
@@ -11,7 +11,7 @@ namespace SpawnDev.NexStar.Tests;
 /// This is a stand-in used to test the guard's reactions; the direction a real 127SLT takes is something only the real mount can tell
 /// (see the read-only hardware tests and the plan).
 /// </summary>
-internal sealed class SimulatedMount : INexStarTransport
+public sealed class SimulatedMount : INexStarTransport
 {
     public enum GotoPolicy
     {

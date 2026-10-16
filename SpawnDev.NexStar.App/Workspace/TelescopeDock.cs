@@ -7,6 +7,7 @@ namespace SpawnDev.NexStar.App.Workspace;
 public sealed class DockState
 {
     public bool Connected { get; init; }
+    public bool Demo { get; init; }
     public string Title { get; init; } = "";
     public bool Aligned { get; init; }
     public bool HasFrame { get; init; }
@@ -111,7 +112,7 @@ public sealed class TelescopeDock
         _cableText.Color = t.TextSecondary;
         _message.Color = t.TextPrimary;
 
-        _status.Text = s.Connected ? $"{s.Title}   {(s.Aligned ? "aligned" : s.HasFrame ? "aligned by NexStar" : "not aligned")}" : "Not connected";
+        _status.Text = s.Connected ? $"{(s.Demo ? "DEMO  " : "")}{s.Title}   {(s.Aligned ? "aligned" : s.HasFrame ? "aligned here" : "not aligned")}" : "Not connected";
         if (s.Connected && s.TruePointing is { } tp)
             _true.Text = $"Az {tp.Azimuth:F2}   Alt {tp.Altitude:F2}";
         else if (s.Connected && s.MountPointing is { } mp)

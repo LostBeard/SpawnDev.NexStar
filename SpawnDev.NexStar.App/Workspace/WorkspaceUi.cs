@@ -38,6 +38,9 @@ public sealed class WorkspaceUi
     public TelescopeDock Dock { get; } = new();
     public SelectionCard Card { get; } = new();
 
+    /// <summary>The telescope is a simulation: say so everywhere it is named.</summary>
+    public bool Demo { get; set; }
+
     /// <summary>Raised when the user asks to connect. The argument is true for WebUSB.</summary>
     public event Action<bool>? ConnectRequested;
 
@@ -87,8 +90,8 @@ public sealed class WorkspaceUi
         var narrow = width < 760;
         _title.X = 14; _title.Y = 12;
         _connection.X = 124; _connection.Y = 14;
-        _position.X = narrow ? 14 : 330; _position.Y = narrow ? 30 : 14;
-        _cable.X = narrow ? 14 : 640; _cable.Y = 14;
+        _position.X = narrow ? 14 : 360; _position.Y = narrow ? 30 : 14;
+        _cable.X = narrow ? 14 : 650; _cable.Y = 14;
         _clock.Width = 150; _clock.X = width - 150 - 14; _clock.Y = 14;
         _serial.Y = 8; _usb.Y = 8; _disconnect.Y = 8;
         _serial.X = width - 150 - 14 - 96 - 8 - 118 - 8; _usb.X = _serial.X + 96 + 8;
@@ -112,11 +115,11 @@ public sealed class WorkspaceUi
         _serial.Visible = _usb.Visible = !connected;
         _disconnect.Visible = connected;
         _connection.Text = connected
-            ? $"{_mount.Model.GetDisplayName()} {_mount.Version}  {(_mount.IsAligned ? "aligned" : "not aligned")}"
+            ? $"{(Demo ? "DEMO " : "")}{_mount.Model.GetDisplayName()}  {(_mount.IsAligned ? "aligned" : dock.HasFrame ? "aligned here" : "not aligned")}"
             : "Not connected";
 
         var p = _mount.CurrentAzAlt;
-        _position.Text = connected && p != null ? $"Az {p.Azimuth:F3}°   Alt {p.Altitude:F3}°" : "";
+        _position.Text = connected && p != null ? $"Mount Az {p.Azimuth:F3}°   Alt {p.Altitude:F3}°" : "";
 
         var cable = _mount.Cable;
         if (connected)

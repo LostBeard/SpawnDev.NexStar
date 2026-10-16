@@ -18,6 +18,9 @@ public sealed class WorkspaceDeeplink
     public bool? Night { get; init; }
     public SkyLayers? Layers { get; init; }
 
+    /// <summary>?sim=1 connects a simulated telescope instead of a real one: to try the workspace (and to check it) with nothing attached.</summary>
+    public bool Simulate { get; init; }
+
     public static WorkspaceDeeplink Parse(string uri)
     {
         var q = uri.IndexOf('?');
@@ -38,6 +41,7 @@ public sealed class WorkspaceDeeplink
             Utc = when,
             Night = values.TryGetValue("night", out var n) ? n != "0" : null,
             Layers = layers,
+            Simulate = values.TryGetValue("sim", out var sim) && sim != "0",
         };
     }
 }

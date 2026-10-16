@@ -1,21 +1,19 @@
-// SpawnDev.NexStar.Shot: opens a URL in a FRESH headless Chrome (its own profile, never the user's browser), lets the page run, and saves a screenshot.
-// Prints the page's console and errors, so a blank canvas explains itself.
+// SpawnDev.NexStar.Shot: opens a URL in a FRESH headless Chrome (its own profile, never the user's browser), lets the page run, plays a list of actions
+// in the order given, and saves a screenshot. Prints the page's console and errors, so a blank canvas explains itself.
 //
-//   shot <url> <out.png> [--size 1280x800] [--wait 4000] [--click x,y]... [--drag x0,y0,x1,y1]... [--wheel x,y,delta]... [--press Key]... [--touch] [--scale 1]
+//   shot <url> <out.png> [--size 1280x800] [--wait 4000] [--touch] [--scale 1] then any of, in order:
+//     --click x,y   --drag x0,y0,x1,y1   --wheel x,y,delta   --press Key   --hold x,y,ms   --sleep ms   --snap file.png
 //
-// Example: shot http://localhost:8099/workspace shot.png --size 1280x800 --wait 5000
+// Example: shot http://localhost:8099/workspace?sim=1 shot.png --size 1280x800 --wait 5000 --click 1100,520 --sleep 500 --hold 1134,262,1500 --snap held.png
 using Microsoft.Playwright;
 
-if (args.Length < 2) { Console.WriteLine("usage: shot <url> <out.png> [--size WxH] [--wait ms] [--click x,y]... [--press Key]... [--scale n]"); return 1; }
+if (args.Length < 2) { Console.WriteLine("usage: shot <url> <out.png> [--size WxH] [--wait ms] [--touch] [--scale n] [--click x,y|--drag x0,y0,x1,y1|--wheel x,y,delta|--press Key|--hold x,y,ms|--sleep ms|--snap file]..."); return 1; }
 var url = args[0];
 var output = args[1];
 int width = 1280, height = 800, wait = 4000;
 double scale = 1;
-var clicks = new List<(float x, float y)>();
-var presses = new List<string>();
-var drags = new List<(float x0, float y0, float x1, float y1)>();
-var wheels = new List<(float x, float y, float delta)>();
 var touch = false;
+var actions = new List<(string Kind, string Value)>();
 for (int i = 2; i < args.Length; i++)
 {
     switch (args[i])
@@ -23,13 +21,15 @@ for (int i = 2; i < args.Length; i++)
         case "--size": var p = args[++i].Split('x'); width = int.Parse(p[0]); height = int.Parse(p[1]); break;
         case "--wait": wait = int.Parse(args[++i]); break;
         case "--scale": scale = double.Parse(args[++i]); break;
-        case "--click": var c = args[++i].Split(','); clicks.Add((float.Parse(c[0]), float.Parse(c[1]))); break;
-        case "--press": presses.Add(args[++i]); break;
-        case "--drag": var d = args[++i].Split(','); drags.Add((float.Parse(d[0]), float.Parse(d[1]), float.Parse(d[2]), float.Parse(d[3]))); break;
-        case "--wheel": var wv = args[++i].Split(','); wheels.Add((float.Parse(wv[0]), float.Parse(wv[1]), float.Parse(wv[2]))); break;
         case "--touch": touch = true; break;
+        case "--click": case "--drag": case "--wheel": case "--press": case "--hold": case "--sleep": case "--snap":
+            actions.Add((args[i][2..], args[++i]));
+            break;
+        default: Console.WriteLine($"unknown option {args[i]}"); return 1;
     }
 }
+
+static float[] Nums(string value) => value.Split(',').Select(float.Parse).ToArray();
 
 using var playwright = await Playwright.CreateAsync();
 await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
@@ -50,29 +50,57 @@ page.Console += (_, m) => Console.WriteLine($"[console.{m.Type}] {m.Text}");
 page.PageError += (_, e) => Console.WriteLine($"[pageerror] {e}");
 await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 120000 });
 await page.WaitForTimeoutAsync(wait);
-foreach (var (x, y) in clicks)
+foreach (var (kind, value) in actions)
 {
-    if (touch) await page.Touchscreen.TapAsync(x, y); else await page.Mouse.ClickAsync(x, y);
-    await page.WaitForTimeoutAsync(600);
-}
-foreach (var (x0, y0, x1, y1) in drags)
-{
-    await page.Mouse.MoveAsync(x0, y0);
-    await page.Mouse.DownAsync();
-    for (int step = 1; step <= 12; step++) await page.Mouse.MoveAsync(x0 + (x1 - x0) * step / 12f, y0 + (y1 - y0) * step / 12f);
-    await page.Mouse.UpAsync();
-    await page.WaitForTimeoutAsync(500);
-}
-foreach (var (x, y, delta) in wheels)
-{
-    await page.Mouse.MoveAsync(x, y);
-    await page.Mouse.WheelAsync(0, delta);
-    await page.WaitForTimeoutAsync(500);
-}
-foreach (var key in presses)
-{
-    await page.Keyboard.PressAsync(key);
-    await page.WaitForTimeoutAsync(300);
+    switch (kind)
+    {
+        case "click":
+        {
+            var c = Nums(value);
+            if (touch) await page.Touchscreen.TapAsync(c[0], c[1]); else await page.Mouse.ClickAsync(c[0], c[1]);
+            await page.WaitForTimeoutAsync(600);
+            break;
+        }
+        case "drag":
+        {
+            var d = Nums(value);
+            await page.Mouse.MoveAsync(d[0], d[1]);
+            await page.Mouse.DownAsync();
+            for (int step = 1; step <= 12; step++) await page.Mouse.MoveAsync(d[0] + (d[2] - d[0]) * step / 12f, d[1] + (d[3] - d[1]) * step / 12f);
+            await page.Mouse.UpAsync();
+            await page.WaitForTimeoutAsync(500);
+            break;
+        }
+        case "wheel":
+        {
+            var w = Nums(value);
+            await page.Mouse.MoveAsync(w[0], w[1]);
+            await page.Mouse.WheelAsync(0, w[2]);
+            await page.WaitForTimeoutAsync(500);
+            break;
+        }
+        case "press":
+            await page.Keyboard.PressAsync(value);
+            await page.WaitForTimeoutAsync(300);
+            break;
+        case "hold":
+        {
+            var h = Nums(value);
+            await page.Mouse.MoveAsync(h[0], h[1]);
+            await page.Mouse.DownAsync();
+            await page.WaitForTimeoutAsync((int)h[2]);
+            await page.Mouse.UpAsync();
+            await page.WaitForTimeoutAsync(400);
+            break;
+        }
+        case "sleep":
+            await page.WaitForTimeoutAsync(int.Parse(value));
+            break;
+        case "snap":
+            await page.ScreenshotAsync(new PageScreenshotOptions { Path = value });
+            Console.WriteLine($"snapped {value}");
+            break;
+    }
 }
 await page.ScreenshotAsync(new PageScreenshotOptions { Path = output });
 Console.WriteLine($"saved {output} ({width}x{height} at {scale}x)");

@@ -42,6 +42,7 @@ public sealed class WorkspaceHost : IDisposable
     private string? _cardNote;
     private bool _gotoBusy;
     private Storage? _storage;
+    private bool _demo;
 
     private const string PointingKey = "nexstar.pointing";
     private const string CableKey = "nexstar.cable";
@@ -161,6 +162,17 @@ public sealed class WorkspaceHost : IDisposable
 
         _runCts = new CancellationTokenSource();
         _ = _scope.RunAsync(_runCts.Token);
+
+        if (Deeplink?.Simulate == true) _ = AttachSimulatorAsync();
+    }
+
+    /// <summary>A simulated telescope at real speeds, for trying the workspace with nothing attached. It starts unaligned and facing its own zero, like a real one.</summary>
+    private async Task AttachSimulatorAsync()
+    {
+        _demo = true;
+        _hud!.Demo = true;
+        var simulator = new SpawnDev.NexStar.Simulation.SimulatedMount(scale: 1, startAzimuth: 20, startAltitude: 30);
+        if (!await _mount.AttachTransportAsync(simulator)) Console.WriteLine("[Workspace] the simulated telescope did not connect");
     }
 
     private string? ReadStored(string key)
@@ -245,6 +257,7 @@ public sealed class WorkspaceHost : IDisposable
         return new DockState
         {
             Connected = _mount.ComsEnabled,
+            Demo = _demo,
             Title = $"{_mount.Model.GetDisplayName()} {_mount.Version}",
             Aligned = _mount.IsAligned,
             HasFrame = _scope?.HasFrame ?? false,
