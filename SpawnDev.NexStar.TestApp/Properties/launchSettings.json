@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "SpawnDev.NexStar.TestApp": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:53544;http://localhost:53545"
+    }
+  }
+}

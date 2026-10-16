@@ -44,6 +44,9 @@ public sealed class WorkspaceUi
     public TimeBar Time { get; } = new();
     public EyepiecePanel Eyepiece { get; } = new();
 
+    /// <summary>Where the heading tape goes: just under the bar (and under the toggle row on a narrow screen).</summary>
+    public float CompassTop { get; private set; } = 56;
+
     /// <summary>The telescope is a simulation: say so everywhere it is named.</summary>
     public bool Demo { get; set; }
 
@@ -136,6 +139,7 @@ public sealed class WorkspaceUi
             _disconnect.X = _serial.X;
         }
         _topBar.Height = barHeight;
+        CompassTop = narrow ? barHeight + 42 : barHeight + 10;
 
         // the toggles and the panels they open sit under the bar
         if (narrow)

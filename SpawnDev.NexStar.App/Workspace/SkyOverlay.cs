@@ -25,6 +25,9 @@ public sealed class SkyOverlay : UIElement
     public bool NightMode { get; set; } = true;
 
     public bool ShowStarNames { get; set; } = true;
+
+    /// <summary>Where the heading tape sits: pixels from the top (under the HUD bar).</summary>
+    public float CompassTop { get; set; } = 56;
     public bool ShowConstellationNames { get; set; } = true;
     public bool ShowSolarSystem { get; set; } = true;
 
@@ -56,6 +59,7 @@ public sealed class SkyOverlay : UIElement
         if (!Visible) return;
         _placed.Clear();
         DrawCompass(renderer);
+        DrawCompassTape(renderer);
         if (ShowConstellationNames) DrawConstellationNames(renderer);
         if (ShowStarNames) DrawStarNames(renderer);
         if (ShowSolarSystem) DrawSolarSystem(renderer);
@@ -63,6 +67,44 @@ public sealed class SkyOverlay : UIElement
         DrawTelescope(renderer);
         DrawPhone(renderer);
         base.Draw(renderer);
+    }
+
+    /// <summary>
+    /// The heading tape: which way the chart looks, with N, NE, E... on it wherever they fall. The letters on the horizon only show when that part of the
+    /// horizon is on screen; this is always there.
+    /// </summary>
+    private void DrawCompassTape(UIRenderer r)
+    {
+        float width = (float)Math.Min(380, _view.WidthPx - 24);
+        if (width < 120) return;
+        float centerX = (float)(_view.WidthPx / 2), left = centerX - width / 2, top = CompassTop, height = 30;
+        r.DrawRect(left, top, width, height, Tone(0, 0, 0, 175));
+        var line = Tone(255, 150, 110, 200);
+        var marks = CompassTape.Marks(_view.CenterAzimuth, 2.2, width / 2);
+        foreach (var m in marks)
+        {
+            float x = centerX + (float)m.X;
+            float tick = m.Label != null ? 12 : m.Major ? 8 : 4;
+            r.DrawRect(x - 0.5f, top + height - tick, 1.2f, tick, line);
+        }
+        foreach (var m in marks)
+        {
+            if (m.Label == null) continue;
+            bool cardinal = m.Label.Length == 1;
+            float size = cardinal ? 17f : 12f;
+            float w = r.MeasureText(m.Label, size);
+            float x = centerX + (float)m.X - w / 2;
+            if (x < left + 2 || x + w > left + width - 2) continue;
+            var color = m.Label == "N" ? Tone(255, 235, 200) : cardinal ? Tone(255, 190, 130) : Tone(210, 150, 110);
+            r.DrawText(m.Label, x, top + 2, size, color);
+        }
+        // the middle: a pointer and the heading as a number
+        float p = centerX;
+        r.DrawRect(p - 0.8f, top, 1.6f, 5, Tone(255, 255, 255));
+        var readout = CompassTape.Readout(_view.CenterAzimuth);
+        float rw = r.MeasureText(readout, 12f);
+        r.DrawRect(p - rw / 2 - 5, top + height + 1, rw + 10, 17, Tone(0, 0, 0, 175));
+        r.DrawText(readout, p - rw / 2, top + height + 3, 12f, Tone(255, 235, 200));
     }
 
     private bool OnScreen(double x, double y, double margin = 0) => x >= -margin && x <= _view.WidthPx + margin && y >= -margin && y <= _view.HeightPx + margin;

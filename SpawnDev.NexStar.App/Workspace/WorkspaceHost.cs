@@ -519,6 +519,7 @@ public sealed class WorkspaceHost : IDisposable
             if (_scope?.PadHeld != null) _scope.Heartbeat();
             _overlay!.Selected = _selected;
             _overlay.PhonePointing = _eyepiece?.ChartPointing;
+            _overlay.CompassTop = _hud.CompassTop;
             _overlay.TelescopePointing = _scope?.HasFrame == true ? _scope.TruePointing() : null;
             _hud.Card.Show(_selected, _mount.ComsEnabled, _mount.IsAligned, _cardNote, trackingThis: _selected != null && _scope?.IsTracking == true && _scope.TrackingName == _selected.Name, hasFrame: _scope?.HasFrame ?? false);
             _eyepiece?.Update();
