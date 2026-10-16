@@ -1,204 +1,96 @@
 # SpawnDev.NexStar
 
-**SpawnDev.NexStar** provides a robust `NexStarService` for communicating with and controlling Celestron NexStar telescopes directly from a browser using the [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API) in Blazor WebAssembly.
-
-Built on top of [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS), this library enables full hardware access without requiring a backend server.
+Control a Celestron NexStar telescope from a browser. **SpawnDev.NexStar** talks to the hand control over the [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API) (desktop) or [WebUSB](https://developer.mozilla.org/en-US/docs/Web/API/WebUSB_API) (Android, through the Prolific PL2303 adapter), in Blazor WebAssembly, with no server. It is built on [SpawnDev.SpawnJS](https://github.com/LostBeard/SpawnDev.SpawnJS).
 
 [![NuGet version](https://badge.fury.io/nu/SpawnDev.NexStar.svg?label=SpawnDev.NexStar)](https://www.nuget.org/packages/SpawnDev.NexStar)
 
----
+**[Launch the app](https://lostbeard.github.io/SpawnDev.NexStar/)**
 
-## 🔭 SpawnDev NexStar App
-**[Launch NexStar Control](https://lostbeard.github.io/SpawnDev.NexStar/)**
-
-The repository includes `SpawnDev.NexStar.App`, a full-featured Progressive Web App (PWA) demonstrating the library's capabilities.
-
-### App Features:
-- **Telescope Control**: 
-  - Complete directional slewing with variable rates.
-  - GoTo coordinates (RA/Dec).
-  - Tracking mode selection (EQ North, EQ South, Alt-Az, Off).
-- **Object Browser**: 
-  - Catalog of 110 Messier objects and bright alignment stars.
-  - "Quick Access" panel showing objects currently visible from your location.
-  - Filter by constellation, magnitude, and type.
-- **Satellite Tracker** 🛰️:
-  - Real-time tracking of orbital objects (ISS, Starlink, weather satellites, etc.).
-  - Fetches TLE data from CelesTrak with offline caching.
-  - Automatic telescope slewing to track selected satellite.
-- **Plane Tracker** ✈️:
-  - Real-time tracking of nearby aircraft using ADS-B data.
-  - Displays callsign, altitude, speed, and distance.
-  - Calculate look angles and track aircraft with telescope.
-- **Alignment Helper**: 
-  - Real-time suggestions for best alignment stars based on time and location.
-  - Visual tracking of alignment status.
-- **Location Services**: 
-  - Sync telescope time and location with browser data.
-- **Fallback USB Support**: 
-  - For Android devices, uses Web USB API to connect via Prolific PL2303 driver.
-- **Dark Mode**: 
-  - Optimized dark red/black UI for viewing in low light environments.
-
-### Data Sources & Credits
-
-| Feature | Source | License |
-|---------|--------|---------|
-| **Satellite TLE Data** | [CelesTrak](https://celestrak.org/) | Free for non-commercial use |
-| **Aircraft Data** | [OpenSky Network](https://opensky-network.org/) | Free API (non-commercial) |
-
-### Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| [SGP.NET](https://www.nuget.org/packages/SGPdotNET/) | SGP4 orbital propagation for satellite tracking |
+Tested on a Celestron 127SLT (hand control 5.35). The protocol follows Celestron's *NexStar Communication Protocol*; the other models it lists (NexStar GPS, i-Series, SE, GT, CPC, Advanced GT, CGE, Evolution) should work but have not been tried.
 
 ---
 
-## 💻 Library Features (`SpawnDev.NexStar`)
+## What the library does
 
-### Core Capabilities
-- **Web Serial Connectivity**: Direct serial port selection and connection via browser.
-- **Web USB Connectivity**: Fallback connection method for Android devices using Web USB API.
-- **Command Protocol**: Implementation of the Celestron NexStar communication protocol.
-- **Position Tracking**: 
-  - Real-time RA/Dec and Az/Alt monitoring.
-  - Automatic polling and state management.
-- **Astronomy Math**: 
-  - Built-in utilities for coordinate conversion (Equatorial <-> Horizontal).
-  - LST (Local Sidereal Time) calculation.
-  - Visibility calculations based on observer location.
-- **Catalogs**: 
-  - Integrated database of alignment stars and Messier objects.
+| Area | Details |
+|---|---|
+| **Connection** | `NexStarService` over any `INexStarTransport`: WebSerial, WebUSB (a hand-written PL2303 driver), or a desktop serial port (`SpawnDev.NexStar.Desktop`). |
+| **Protocol** | Every response is framed by its command's fixed length, not "up to the first `#`" (binary replies contain `0x23`: this mount's version is 5.35). A failed read returns `null`; it is never a position of (0, 0) or a state of "not aligned". |
+| **Mount control** | GoTo and sync (RA/Dec, Az/Alt), fixed and variable slews, tracking modes, time and location. |
+| **Cable guard** | Counts the turns of the azimuth axis so the hand-control and power cords cannot wrap. See below. |
+| **Astronomy** | Planets from the JPL approximate elements, the Moon from the full Meeus series with parallax, phase, libration and lit craters, precession from J2000, sidereal time, Az/Alt conversion, refraction. Validated against NASA/JPL Horizons. |
+| **Phone sensors** | `PhoneSensorService`: device orientation for a push-to aid. |
 
-### Installation
+An unaligned mount (check `IsAligned`) reports RA/Dec that mean nothing, its Az/Alt are relative to the direction it was powered on, and RA/Dec GoTo does nothing until it is aligned.
 
-```bash
-dotnet add package SpawnDev.NexStar
-```
+## Usage
 
-### Usage Example (Program.cs)
-
-```cs
-using SpawnDev.SpawnJS;
-using SpawnDev.NexStar;
-
-var builder = WebAssemblyHostBuilder.CreateDefault(args);
-builder.RootComponents.Add<App>("#app");
-builder.RootComponents.Add<HeadOutlet>("head::after");
-
-// Add SpawnJSRuntime (Required for Web Serial/USB)
-builder.Services.AddBlazorJSRuntime();
-
-// Add NexStarService
+```csharp
+// Program.cs
+builder.Services.AddSpawnJSRuntime(out var JS);
 builder.Services.AddSingleton<NexStarService>();
-
-await builder.Build().BlazorJSRunAsync();
 ```
-
-### Common Usage Examples
 
 ```razor
 @inject NexStarService NexStar
 
-<button @onclick="Connect" disabled="@NexStar.SerialPortSelected">Connect</button>
-<button @onclick="Disconnect" disabled="@(!NexStar.SerialPortSelected)">Disconnect</button>
-
-@if (NexStar.SerialPortSelected)
-{
-    <p>Model: @NexStar.Model | Aligned: @NexStar.IsAligned</p>
-    <p>RA: @NexStar.CurrentRa?.ToString("F4")h | Dec: @NexStar.CurrentDec?.ToString("F2")°</p>
-    <p>Az: @NexStar.CurrentAz?.ToString("F2")° | Alt: @NexStar.CurrentAlt?.ToString("F2")°</p>
-    
-    <button @onclick="GoToM31">GoTo M31 (Andromeda)</button>
-    <button @onclick="StopSlew">Stop</button>
-}
+<button @onclick="Connect">Connect</button>
 
 @code {
-    // Connect to telescope (opens device picker)
-    private async Task Connect()
+    async Task Connect()
     {
-        if (await NexStar.SelectPortAsync())
-        {
-            Console.WriteLine($"Connected to {NexStar.Model}");
-        }
-    }
-
-    // Disconnect from telescope
-    private async Task Disconnect() => await NexStar.DeselectPortAsync();
-
-    // GoTo a specific RA/Dec coordinate (M31 Andromeda Galaxy)
-    private async Task GoToM31()
-    {
-        double ra = 0.712;   // RA in hours (0h 42m 44s)
-        double dec = 41.27;  // Dec in degrees (+41° 16')
-        await NexStar.GotoRaDecAsync(ra, dec);
-    }
-
-    // GoTo using Az/Alt (useful for terrestrial or satellite tracking)
-    private async Task GoToAzAlt(double az, double alt)
-    {
-        await NexStar.GotoAzAltAsync(az, alt);
-    }
-
-    // Slew manually (for directional buttons)
-    private async Task SlewNorth() => await NexStar.SlewFixedAsync(SlewAxis.Dec, SlewDirection.Positive, 5);
-    private async Task SlewSouth() => await NexStar.SlewFixedAsync(SlewAxis.Dec, SlewDirection.Negative, 5);
-    private async Task SlewEast()  => await NexStar.SlewFixedAsync(SlewAxis.Ra, SlewDirection.Positive, 5);
-    private async Task SlewWest()  => await NexStar.SlewFixedAsync(SlewAxis.Ra, SlewDirection.Negative, 5);
-
-    // Stop all slewing
-    private async Task StopSlew() => await NexStar.StopAllSlewAsync();
-
-    // Set tracking mode
-    private async Task SetTracking(TrackingMode mode) => await NexStar.SetTrackingModeAsync(mode);
-
-    // Sync current position (after centering on a known star)
-    private async Task SyncPosition(double ra, double dec) => await NexStar.SyncRaDecAsync(ra, dec);
-
-    // Set telescope time/location from browser
-    private async Task SyncTimeLocation()
-    {
-        await NexStar.SetTimeAsync(DateTime.UtcNow);
-        // Location can be set via NexStar.SetLocationAsync(lat, lon)
+        // opens the browser's device picker; true once a hand control has answered
+        if (!await NexStar.SelectPortAsync(useWebUSB: false))
+            Console.WriteLine(NexStar.LastError);
     }
 }
 ```
 
-### Key Properties
+```csharp
+var pos = await NexStar.PollAsync();            // read Az/Alt, update the cable count, run the cable checks (call about once a second)
+await NexStar.GotoAzAltGuardedAsync(230, 20);   // goes by a route that cannot wrap the cable
+await NexStar.JogAsync(2, 0);                   // a small bounded move: safe for a press-and-hold button when you cannot see the telescope
+await NexStar.UnwindCableAsync();               // back to cable-neutral, the long way round if that is the way that unwinds the cord
+```
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `SerialPortSelected` | `bool` | True if connected to telescope |
-| `IsAligned` | `bool` | True if telescope is aligned |
-| `Model` | `string?` | Telescope model name |
-| `CurrentRa` / `CurrentDec` | `double?` | Current RA/Dec position |
-| `CurrentAz` / `CurrentAlt` | `double?` | Current Az/Alt position |
-| `TrackingMode` | `TrackingMode` | Current tracking mode |
+Without a browser (tools, tests):
 
-### Key Methods
+```csharp
+var transport = await SystemSerialTransport.FindMountAsync();  // NEXSTAR_PORT, or the first port that answers an echo
+var service = new NexStarService();
+await service.AttachTransportAsync(transport!);
+```
 
-| Method | Description |
-|--------|-------------|
-| `SelectPortAsync()` | Opens device picker, connects to telescope |
-| `DeselectPortAsync()` | Disconnects from telescope |
-| `GotoRaDecAsync(ra, dec)` | Slew to RA/Dec coordinates |
-| `GotoAzAltAsync(az, alt)` | Slew to Az/Alt coordinates |
-| `SlewFixedAsync(axis, dir, rate)` | Manual slew at fixed rate (1-9) |
-| `StopAllSlewAsync()` | Stop all motion |
-| `SyncRaDecAsync(ra, dec)` | Sync position after centering |
-| `SetTrackingModeAsync(mode)` | Set tracking (Off, AltAz, EqNorth, EqSouth) |
+## Cable guard
 
-### Requirements
-- A browser with **Web Serial API** support (Chrome, Edge, Opera).
-- A browser with **Web USB API** support (Chrome on Android).
-- A Celestron NexStar telescope (or compatible mount).
-- A USB cable connected to the telescope's hand controller port.
+The hand control and power cord run to the part of the mount that turns. The mount reports azimuth only as 0-360, so after a turn and a bit it reads exactly as after a bit: nothing in it says how many times the cord went round. `CableGuard` (`NexStarService.Cable`) keeps that count itself.
 
-### Tested Platforms
-- **Windows (Chrome)**: Verified working with Web Serial API.
-- **Android (Chrome)**: Verified working with Web USB API (using minimal PL2303 driver).
-- **Web Serial**: Generic Support
-- **Web USB**: Generic Prolific PL2303 Support
+- **Running total.** Every azimuth reading is unwrapped into the degrees turned from the cable-neutral position (`Cumulative`), kept between sessions (`Cable.State.ToJson()`), with a limit of +/-200 degrees by default (400 of travel; configurable).
+- **Routing.** A goto is planned around the limit: if the short way would wrap the cord, it goes the long way in steps under 150 degrees, so the mount's own short-way choice for each step is the planned way. After each step the real position is checked against the plan, and the move is cancelled if the mount turns the wrong way.
+- **Slews** are slowed in the warning margin and stopped before the limit by a monitor that watches the real position. **Tracking** is switched off at the limit (and the time left is reported).
+- **It says when it does not know.** After a long gap in readings, a lost connection mid-move, or on a fresh start, the guard refuses motion until you confirm where the cable is (`Cable.SetNeutral`, `Cable.Confirm`).
+- **A sync moves the reading, not the cable.** After a sync or alignment the next reading is taken as a new baseline.
+- **Out of sight.** A slew does not end by itself: if the page dies, the mount keeps going. For remote use, drive it with `JogAsync`: each step ends by itself.
 
+## Tests
 
+Run through PlaywrightMultiTest (`dotnet test PlaywrightMultiTest`). The suite covers the framing, codecs, clock, command channel, the service over a protocol simulator, the cable guard over a physical mount simulator, and the astronomy against JPL Horizons. The hardware tests talk to a real mount on a desktop serial port (`NEXSTAR_PORT`, or auto-detected) and are **read-only**; they report as unsupported when no mount answers.
+
+## Data sources and credits
+
+| Feature | Source | License |
+|---|---|---|
+| Satellite TLE data | [CelesTrak](https://celestrak.org/) | Free for non-commercial use |
+| Aircraft | [OpenSky Network](https://opensky-network.org/) | Free API (non-commercial) |
+| Planet positions | JPL "Keplerian Elements for Approximate Positions of the Major Planets" (E. M. Standish) | Public |
+| Moon series | Meeus, *Astronomical Algorithms*, Tables 47.A and 47.B; the coefficients were read from [astronomia](https://github.com/commenthol/astronomia) (Sonia Keys, commenthol) | MIT |
+| Reference positions in the tests | [NASA/JPL Horizons](https://ssd.jpl.nasa.gov/horizons/) | Public |
+| SGP4 | [SGP.NET](https://www.nuget.org/packages/SGPdotNET/) | |
+
+Planet accuracy is the documented accuracy of that table (Jupiter 400 arcseconds, Saturn 600, the inner planets under 50); the Moon is good to about 20 arcseconds. That is for finding and pointing, not occultation timing.
+
+## Requirements
+
+- Chrome or Edge with Web Serial (desktop) or WebUSB (Android).
+- A Celestron NexStar telescope and a USB cable to the hand control's port.
+- The Sun must never be pointed at without a solar filter: the library does not list it as a goto target.

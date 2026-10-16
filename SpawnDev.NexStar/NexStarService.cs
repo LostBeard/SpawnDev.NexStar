@@ -9,7 +9,7 @@ namespace SpawnDev.NexStar
     /// Every query returns null (or leaves the cached value alone) when the hand control does not answer:
     /// a failed read never becomes a position, a time or a state.
     /// </summary>
-    public class NexStarService : IAsyncBackgroundService
+    public partial class NexStarService : IAsyncBackgroundService
     {
         #region Private Fields
         private SpawnJSRuntime? JS;
@@ -105,6 +105,13 @@ namespace SpawnDev.NexStar
         /// The hand control's clock as last read
         /// </summary>
         public TelescopeTime? CurrentTime { get; private set; }
+
+        /// <summary>
+        /// Counts the turns of the azimuth axis so the cords do not wrap. Every azimuth read feeds it; the guarded moves
+        /// (<see cref="GotoAzAltGuardedAsync"/>, <see cref="JogAsync"/>, <see cref="BeginAzimuthSlewAsync"/>) obey it. Keep its state
+        /// (<see cref="CableGuard.State"/>) between sessions.
+        /// </summary>
+        public CableGuard Cable { get; } = new CableGuard();
 
         #endregion
 
@@ -244,6 +251,24 @@ namespace SpawnDev.NexStar
             _disconnecting = true;
             try
             {
+                // Closing in the middle of a move leaves the mount going with nobody watching the cable: stop it while there is still a line.
+                if (_motionActive)
+                {
+                    _slewMonitorCts?.Cancel();
+                    var stopped = false;
+                    if (transport.Connected)
+                    {
+                        try
+                        {
+                            stopped = await StopAllSlewAsync();
+                            stopped &= await CancelGotoAsync();
+                            await GetAzAltAsync(precise: true); // count the last of the motion
+                        }
+                        catch { stopped = false; }
+                    }
+                    if (!stopped) Cable.MarkUncertain("the connection ended while the mount may have been moving");
+                    _motionActive = false;
+                }
                 transport.OnDisconnect -= Transport_OnDisconnect;
                 Transport = null;
                 ResetTelescopeState();
@@ -390,6 +415,7 @@ namespace SpawnDev.NexStar
             var payload = await SendAsync(precise ? "z" : "Z");
             if (!NexStarProtocol.TryParsePositionResponse(payload, out var az, out var alt)) return null;
             CurrentAzAlt = new AzAltCoordinates(az, alt);
+            Cable.Update(az, DateTime.UtcNow);
             OnStatusChanged?.Invoke();
             return CurrentAzAlt;
         }
@@ -418,7 +444,10 @@ namespace SpawnDev.NexStar
         public async Task<bool> SyncRaDecAsync(double ra, double dec, bool precise = false)
         {
             if (!(ra >= 0 && ra <= 360 && dec >= -90 && dec <= 90)) return false;
-            return Acknowledged(await SendAsync(NexStarProtocol.FormatSyncRaDecCommand(ra, dec, precise)));
+            var ok = Acknowledged(await SendAsync(NexStarProtocol.FormatSyncRaDecCommand(ra, dec, precise)));
+            // a sync moves the hand control's azimuth zero without moving the motors: the next reading is a new baseline, not a turn
+            if (ok) Cable.ExpectJump();
+            return ok;
         }
 
         #endregion

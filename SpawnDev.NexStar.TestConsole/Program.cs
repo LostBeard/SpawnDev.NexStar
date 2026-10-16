@@ -13,6 +13,8 @@ services.AddSingleton<CommandChannelTests>();
 services.AddSingleton<ServiceTests>();
 services.AddSingleton<EphemerisTests>();
 services.AddSingleton<LunarTests>();
+services.AddSingleton<CableGuardTests>();
+services.AddSingleton<GuardedMotionTests>();
 services.AddSingleton<AstronomyMathTests>();
 services.AddSingleton<HardwareReadOnlyTests>();
 var sp = services.BuildServiceProvider();
