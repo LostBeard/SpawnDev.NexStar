@@ -1,0 +1,31 @@
+@page "/workspace"
+@layout SpawnDev.NexStar.App.Workspace.EmptyLayout
+@using SpawnDev.SpawnJS
+@using SpawnDev.NexStar.App.Services
+@using SpawnDev.NexStar.App.Workspace
+@implements IDisposable
+@inject SpawnJSRuntime JS
+@inject NexStarService NexStar
+@inject LocationService LocationService
+
+<PageTitle>NexStar</PageTitle>
+
+<canvas @ref="_canvasRef" style="position:fixed;left:0;top:0;width:100vw;height:100vh;display:block;touch-action:none;background:#000;outline:none" tabindex="0"></canvas>
+
+@code {
+    private ElementReference _canvasRef;
+    private WorkspaceHost? _host;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _host = new WorkspaceHost(JS, NexStar, LocationService);
+        await _host.StartAsync(_canvasRef);
+    }
+
+    public void Dispose()
+    {
+        _host?.Dispose();
+        _host = null;
+    }
+}
