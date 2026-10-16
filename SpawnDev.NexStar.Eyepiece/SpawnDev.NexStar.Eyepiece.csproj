@@ -11,6 +11,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<EmbeddedResource Include="Data\WMM2025.COF" LogicalName="WMM2025.COF" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="SpawnDev.RTC" Version="2.3.1" />
 	</ItemGroup>
 

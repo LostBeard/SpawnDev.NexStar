@@ -23,6 +23,7 @@ services.AddSingleton<PointingModelTests>();
 services.AddSingleton<EyepieceProtocolTests>();
 services.AddSingleton<PairingHandshakeTests>();
 services.AddSingleton<QrTests>();
+services.AddSingleton<MagneticModelTests>();
 services.AddSingleton<ViewSettingsTests>();
 services.AddSingleton<TelescopeControllerTests>();
 services.AddSingleton<HardwareReadOnlyTests>();
