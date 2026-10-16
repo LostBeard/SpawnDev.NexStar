@@ -13,6 +13,7 @@
 		<ProjectReference Include="..\SpawnDev.NexStar.Desktop\SpawnDev.NexStar.Desktop.csproj" />
 		<ProjectReference Include="..\SpawnDev.NexStar.Sky\SpawnDev.NexStar.Sky.csproj" />
 		<ProjectReference Include="..\SpawnDev.NexStar.Simulator\SpawnDev.NexStar.Simulator.csproj" />
+		<ProjectReference Include="..\SpawnDev.NexStar.Eyepiece\SpawnDev.NexStar.Eyepiece.csproj" />
 		<PackageReference Include="SpawnDev.UnitTesting.Browser" Version="2.7.0" />
 	</ItemGroup>
 
