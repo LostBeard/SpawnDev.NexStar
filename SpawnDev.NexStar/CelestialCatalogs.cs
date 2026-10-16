@@ -224,7 +224,7 @@ namespace SpawnDev.NexStar
         {
             foreach (var star in AlignmentStars)
             {
-                var altAz = AstronomyMath.EquatorialToHorizontal(
+                var altAz = AstronomyMath.J2000ToHorizontal(
                     star.RightAscension, star.Declination, latitude, longitude, utc);
                 if (altAz.Altitude >= minAltitude)
                 {

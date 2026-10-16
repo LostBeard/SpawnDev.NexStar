@@ -594,7 +594,7 @@ namespace SpawnDev.NexStar
                 .Select(obj => new
                 {
                     Obj = obj,
-                    AltAz = AstronomyMath.EquatorialToHorizontal(
+                    AltAz = AstronomyMath.J2000ToHorizontal(
                         obj.RightAscension, obj.Declination,
                         Location.Latitude, Location.Longitude, time)
                 })

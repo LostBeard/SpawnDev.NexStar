@@ -293,7 +293,7 @@
     private AzAltCoordinates? GetAltAz(CelestialObject obj)
     {
         if (LocationService.Location == null) return null;
-        return AstronomyMath.EquatorialToHorizontal(
+        return AstronomyMath.J2000ToHorizontal(
             obj.RightAscension, obj.Declination,
             LocationService.Location.Latitude, LocationService.Location.Longitude,
             DateTime.UtcNow);

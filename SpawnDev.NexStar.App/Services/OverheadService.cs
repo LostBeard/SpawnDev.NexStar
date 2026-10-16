@@ -327,7 +327,7 @@ public class OverheadService
 
         foreach (var star in CelestialCatalogs.AlignmentStars)
         {
-            var altAz = AstronomyMath.EquatorialToHorizontal(
+            var altAz = AstronomyMath.J2000ToHorizontal(
                 star.RightAscension, star.Declination, location.Latitude, location.Longitude, utc);
             if (altAz.Altitude > 5)
             {
@@ -356,7 +356,7 @@ public class OverheadService
 
         foreach (var m in CelestialCatalogs.Messier)
         {
-            var altAz = AstronomyMath.EquatorialToHorizontal(
+            var altAz = AstronomyMath.J2000ToHorizontal(
                 m.RightAscension, m.Declination, location.Latitude, location.Longitude, utc);
             if (altAz.Altitude > 10)
             {

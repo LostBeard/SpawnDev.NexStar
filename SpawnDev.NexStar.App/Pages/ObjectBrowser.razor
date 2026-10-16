@@ -185,7 +185,7 @@
     {
         if (LocationService.Location == null) return null;
         
-        return AstronomyMath.EquatorialToHorizontal(
+        return AstronomyMath.J2000ToHorizontal(
             obj.RightAscension, 
             obj.Declination,
             LocationService.Location.Latitude,

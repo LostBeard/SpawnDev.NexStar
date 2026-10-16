@@ -274,7 +274,7 @@
         try
         {
             // Get current Moon position
-            var moonPos = LunarMath.GetMoonPosition(DateTime.UtcNow);
+            var moonPos = LunarMath.GetMoonTopocentric(_latitude, _longitude, DateTime.UtcNow); // from the observer, not the Earth centre: the difference is up to a degree
 
             // Convert RA from degrees to the format NexStar expects
             await NexStar.GotoRaDecAsync(moonPos.RightAscension, moonPos.Declination);
