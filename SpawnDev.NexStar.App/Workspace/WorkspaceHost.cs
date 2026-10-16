@@ -43,6 +43,9 @@ public sealed class WorkspaceHost : IDisposable
     private bool _gotoBusy;
     private Storage? _storage;
     private bool _demo;
+    private ViewSettings _settings = new();
+    private TimeSpan _timeShift;
+    private const string ViewKey = "nexstar.view";
 
     private const string PointingKey = "nexstar.pointing";
     private const string CableKey = "nexstar.cable";
@@ -107,6 +110,7 @@ public sealed class WorkspaceHost : IDisposable
             _interaction.Tapped += OnTapped;
             _sky.LookAt(180, 35);
             _sky.FovDegrees = 100;
+            ApplySettings();
             ApplyDeeplink();
 
             // the overlay first, so every panel draws over it
@@ -137,6 +141,13 @@ public sealed class WorkspaceHost : IDisposable
     {
         _scope = new TelescopeController(_mount);
         try { _storage = _window?.LocalStorage; } catch { _storage = null; }
+
+        _settings = ViewSettings.FromJson(ReadStored(ViewKey));
+        _hud!.View.Load(_settings);
+        _hud.View.Changed += s => { _settings = s; ApplySettings(); WriteStored(ViewKey, s.ToJson()); };
+        _hud.View.LocateClicked += () => _ = _location.RequestBrowserLocationAsync();
+        _hud.Time.Shifted += step => _timeShift += step;
+        _hud.Time.NowClicked += () => { _timeShift = TimeSpan.Zero; _timeFixed = null; };
 
         // what survives a reload: the pointing offsets, and where the cable was (the guard re-checks it against the clock on the first reading)
         _scope.SetPointing(PointingModel.FromJson(ReadStored(PointingKey)));
@@ -270,12 +281,27 @@ public sealed class WorkspaceHost : IDisposable
         };
     }
 
+    /// <summary>Puts the saved or chosen settings into the renderer, the overlay and the theme.</summary>
+    private void ApplySettings()
+    {
+        if (_skyRenderer == null || _overlay == null) return;
+        _skyRenderer.Layers = _settings.Layers;
+        _skyRenderer.StarSize = _settings.StarSize;
+        _skyRenderer.NightMode = _settings.Night;
+        _overlay.NightMode = _settings.Night;
+        _overlay.ShowStarNames = _settings.StarNames;
+        _overlay.ShowConstellationNames = _settings.ConstellationNames;
+        _overlay.ShowSolarSystem = _settings.SolarSystem;
+        UITheme.Current = _settings.Night ? NexStarThemes.NightRed : NexStarThemes.Day;
+    }
+
     private void ApplyDeeplink()
     {
         var d = Deeplink;
         if (d == null) return;
         if (d.Latitude is double lat && d.Longitude is double lon) { _sky.Latitude = lat; _sky.Longitude = lon; _siteFixed = true; }
         _timeFixed = d.Utc;
+        if (d.Utc is DateTime fixedTime) _timeShift = fixedTime - DateTime.UtcNow;
         if (d.Fov is double fov) _sky.FovDegrees = Math.Clamp(fov, SkyView.MinFov, SkyView.MaxFov);
         if (d.Azimuth is double az || d.Altitude is double) _sky.LookAt(d.Azimuth ?? _sky.CenterAzimuth, d.Altitude ?? _sky.CenterAltitude);
         if (d.Night is bool night) { _skyRenderer!.NightMode = night; _overlay!.NightMode = night; UITheme.Current = night ? NexStarThemes.NightRed : NexStarThemes.Day; }
@@ -335,7 +361,7 @@ public sealed class WorkspaceHost : IDisposable
                 _sky.Latitude = site.Latitude;
                 _sky.Longitude = site.Longitude;
             }
-            _sky.Utc = _timeFixed ?? DateTime.UtcNow;
+            _sky.Utc = DateTime.UtcNow + _timeShift;
             _sky.Update();
 
             _ui.Update(dt);
@@ -346,6 +372,9 @@ public sealed class WorkspaceHost : IDisposable
             {
                 _sinceSolar = 0;
                 _solar = SkyPicker.SolarSystem(_sky);
+                _hud.View.ShowSite(_location.Location is { } siteHere
+                    ? $"Site {siteHere.Latitude:F3}, {siteHere.Longitude:F3} ({(_location.IsBrowserLocation ? "this device" : "telescope")})"
+                    : "Site unknown: using a default");
                 if (_selected != null) _selected = SkyPicker.Refresh(_selected, _sky, _solar);
             }
             if (_scope?.PadHeld != null) _scope.Heartbeat();

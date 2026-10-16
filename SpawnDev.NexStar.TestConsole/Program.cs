@@ -20,6 +20,7 @@ services.AddSingleton<CatalogDataTests>();
 services.AddSingleton<SkyViewTests>();
 services.AddSingleton<SkyPickerTests>();
 services.AddSingleton<PointingModelTests>();
+services.AddSingleton<ViewSettingsTests>();
 services.AddSingleton<TelescopeControllerTests>();
 services.AddSingleton<HardwareReadOnlyTests>();
 services.AddSingleton<HardwareMotionTests>();

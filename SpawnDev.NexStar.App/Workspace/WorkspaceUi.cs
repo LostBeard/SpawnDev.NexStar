@@ -27,6 +27,7 @@ public sealed class WorkspaceUi
     private readonly UIButton _usb = new() { Text = "Connect USB", Width = 118, Height = 30 };
     private readonly UIButton _disconnect = new() { Text = "Disconnect", Width = 104, Height = 30 };
     private readonly UIButton _dockToggle = new() { Text = "Telescope", Width = TelescopeDock.Width, Height = 30 };
+    private readonly UIButton _viewToggle = new() { Text = "View", Width = ViewPanel.Width, Height = 30 };
     private double _sinceRefresh = 1;
     private int _width, _height;
     private bool _dockOpen = true;
@@ -37,6 +38,8 @@ public sealed class WorkspaceUi
 
     public TelescopeDock Dock { get; } = new();
     public SelectionCard Card { get; } = new();
+    public ViewPanel View { get; } = new();
+    public TimeBar Time { get; } = new();
 
     /// <summary>The telescope is a simulation: say so everywhere it is named.</summary>
     public bool Demo { get; set; }
@@ -53,8 +56,11 @@ public sealed class WorkspaceUi
 
         _root.AddAnchored(_topBar, Anchor.TopLeft);
         _root.AddAnchored(_viewInfo, Anchor.BottomLeft, offsetX: 14, offsetY: -12);
-        _root.AddAnchored(Card.Root, Anchor.BottomLeft, offsetX: 14, offsetY: -(SelectionCard.Height + 40));
+        _root.AddAnchored(Card.Root, Anchor.BottomCenter, offsetX: 0, offsetY: -(TimeBar.Height + 20));
         _root.AddAnchored(_dockToggle, Anchor.TopRight, offsetX: -12, offsetY: BarHeight + 10);
+        _root.AddAnchored(_viewToggle, Anchor.TopLeft, offsetX: 12, offsetY: BarHeight + 10);
+        _root.AddAnchored(View.Root, Anchor.TopLeft, offsetX: 12, offsetY: BarHeight + 46);
+        _root.AddAnchored(Time.Root, Anchor.BottomCenter, offsetX: 0, offsetY: -10);
         _root.AddAnchored(Dock.Root, Anchor.TopRight, offsetX: -12, offsetY: BarHeight + 46);
         _topBar.AddChild(_title);
         _topBar.AddChild(_connection);
@@ -69,6 +75,7 @@ public sealed class WorkspaceUi
         _usb.OnClick = () => ConnectRequested?.Invoke(true);
         _disconnect.OnClick = () => DisconnectRequested?.Invoke();
         _dockToggle.OnClick = () => { _dockOpen = !_dockOpen; _dockChosen = true; ApplyDock(); };
+        _viewToggle.OnClick = () => { View.Show(!View.IsOpen); _viewToggle.Text = View.IsOpen ? "Hide view" : "View"; };
     }
 
     private void ApplyDock()
