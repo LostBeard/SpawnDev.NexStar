@@ -1,0 +1,560 @@
+@page "/settings"
+@using SpawnDev.NexStar.App.Services
+@inject NexStarService NexStar
+@inject LocationService LocationService
+@inject SpawnJSRuntime JS
+
+@using SpawnDev.SpawnJS.JSObjects
+@using SpawnDev.NexStar.App.Components
+
+<PageTitle>Settings - NexStar Control</PageTitle>
+
+<div class="settings-page">
+    <h1>⚙ Settings</h1>
+
+    @if (!NexStar.ComsEnabled)
+    {
+        <div class="alert warning">
+            <p>⚠ Telescope not connected. Connect to access all settings.</p>
+        </div>
+    }
+
+    <!-- Location Settings -->
+    <section class="settings-section">
+        <h2>📍 Location</h2>
+        <div class="settings-content">
+            <div class="setting-row">
+                <div class="setting-info">
+                    <label>Telescope Location</label>
+                    @if (NexStar.Location != null)
+                    {
+                        <span class="value">@NexStar.Location.FormatLatitude()</span>
+                        <span class="value">@NexStar.Location.FormatLongitude()</span>
+                    }
+                    else
+                    {
+                        <span class="value muted">Not available</span>
+                    }
+                </div>
+                <div class="setting-actions">
+                    <button class="btn" @onclick="GetLocation" disabled="@(!NexStar.ComsEnabled || _isLoading)">
+                        Refresh
+                    </button>
+                </div>
+
+            </div>
+
+            <!-- Effective App Location Info -->
+            <div class="setting-row">
+                <div class="setting-info">
+                    <label>App Effective Location</label>
+                    @if (LocationService.Location != null)
+                    {
+                        <span class="value">@LocationService.Location.FormatLatitude()</span>
+                        <span class="value">@LocationService.Location.FormatLongitude()</span>
+                        <span class="detail">Source: @(LocationService.IsBrowserLocation ? "Browser GPS" : "Telescope")</span>
+                    }
+                    else
+                    {
+                        <span class="value muted">Not available</span>
+                    }
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <h4>Set Location Manually</h4>
+            <div class="input-row">
+                <div class="input-group">
+                    <label>Latitude (°)</label>
+                    <input type="number" step="0.0001" min="-90" max="90" @bind="_latitude" placeholder="e.g., 40.7128" />
+                    <span class="hint">Positive = North, Negative = South</span>
+                </div>
+                <div class="input-group">
+                    <label>Longitude (°)</label>
+                    <input type="number" step="0.0001" min="-180" max="180" @bind="_longitude" placeholder="e.g., -74.0060" />
+                    <span class="hint">Positive = East, Negative = West</span>
+                </div>
+            </div>
+            <div class="button-row">
+                <button class="btn btn-primary" @onclick="SetLocation" disabled="@(!NexStar.ComsEnabled || _isLoading)">
+                    Set Location
+                </button>
+                <button class="btn" @onclick="GetBrowserLocation" disabled="@_isLoading">
+                    Use Browser GPS
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Time Settings -->
+    <section class="settings-section">
+        <h2>🕐 Time & Date</h2>
+        <div class="settings-content">
+            <div class="setting-row">
+                <div class="setting-info">
+                    <label>Telescope Time</label>
+                    @if (_telescopeTime != null)
+                    {
+                        <span class="value">@_telescopeTime.LocalTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                        <span class="detail">UTC@(_telescopeTime.TimezoneOffset >= 0 ? "+" : "")@_telescopeTime.TimezoneOffset @(_telescopeTime.DaylightSaving ? "(DST)" : "")</span>
+                    }
+
+                    else
+                    {
+                        <span class="value muted">Not available</span>
+                    }
+                </div>
+                <div class="setting-actions">
+                    <button class="btn" @onclick="GetTime" disabled="@(!NexStar.ComsEnabled || _isLoading)">
+                        Refresh
+                    </button>
+                    <button class="btn btn-primary" @onclick="SyncTime" disabled="@(!NexStar.ComsEnabled || _isLoading)">
+                        Sync with Browser
+                    </button>
+                </div>
+            </div>
+            <div class="setting-row">
+                <div class="setting-info">
+                    <label>Browser Time</label>
+                    <span class="value">@DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                    <span class="detail">@TimeZoneInfo.Local.DisplayName</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Phone Alignment -->
+    <section class="settings-section">
+        <h2>📱 Phone Alignment Aid</h2>
+        <div class="settings-content">
+            <PhoneAlignmentAid />
+        </div>
+    </section>
+
+    <!-- Device Info -->
+    <section class="settings-section">
+        <h2>ℹ Device Information</h2>
+        <div class="settings-content">
+            <div class="info-grid">
+                <div class="info-item">
+                    <label>Model</label>
+                    <span>@(NexStar.ComsEnabled? NexStar.Model.GetDisplayName() : "—")</span>
+                </div>
+                <div class="info-item">
+                    <label>Firmware Version</label>
+                    <span>@(NexStar.ComsEnabled? NexStar.Version: "—")</span>
+                </div>
+                <div class="info-item">
+                    <label>Alignment Status</label>
+                    <span>@(NexStar.ComsEnabled ? (NexStar.IsAligned ? "Aligned" : "Not Aligned") : "—")</span>
+                </div>
+                <div class="info-item">
+                    <label>Tracking Mode</label>
+                    <span>@(NexStar.ComsEnabled? NexStar.CurrentTrackingMode.ToString() : "—")</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    @if (!string.IsNullOrEmpty(_statusMessage))
+    {
+        <div class="alert @_statusClass">
+            @_statusMessage
+        </div>
+    }
+</div>
+
+@implements IDisposable
+@code {
+    private bool _isLoading = false;
+    private string _statusMessage = "";
+    private string _statusClass = "info";
+    private TelescopeTime? _telescopeTime;
+    private double _latitude = 0;
+    private double _longitude = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        LocationService.OnLocationChanged += StateHasChanged;
+        if (NexStar.ComsEnabled)
+        {
+            await RefreshData();
+        }
+    }
+
+    public void Dispose()
+    {
+        LocationService.OnLocationChanged -= StateHasChanged;
+    }
+
+    private async Task RefreshData()
+    {
+        await GetTime();
+        await GetLocation();
+    }
+
+    private async Task GetTime()
+    {
+        if (!NexStar.ComsEnabled) return;
+        _isLoading = true;
+        StateHasChanged();
+
+        _telescopeTime = await NexStar.GetTimeAsync();
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task SyncTime()
+    {
+        if (!NexStar.ComsEnabled) return;
+        _isLoading = true;
+        StateHasChanged();
+
+        var result = await NexStar.SyncTimeAsync();
+
+        if (result)
+        {
+            _statusMessage = "Time synchronized successfully.";
+            _statusClass = "success";
+            await GetTime();
+        }
+        else
+        {
+            _statusMessage = "Failed to sync time.";
+            _statusClass = "error";
+        }
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task GetLocation()
+    {
+        if (!NexStar.ComsEnabled) return;
+        _isLoading = true;
+        StateHasChanged();
+
+        var loc = await NexStar.GetLocationAsync();
+        if (loc != null)
+        {
+            _latitude = loc.Latitude;
+            _longitude = loc.Longitude;
+        }
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task SetLocation()
+    {
+        if (!NexStar.ComsEnabled) return;
+
+        if (_latitude < -90 || _latitude > 90)
+        {
+            _statusMessage = "Latitude must be between -90 and 90 degrees.";
+            _statusClass = "error";
+            return;
+        }
+
+        if (_longitude < -180 || _longitude > 180)
+        {
+            _statusMessage = "Longitude must be between -180 and 180 degrees.";
+            _statusClass = "error";
+            return;
+        }
+
+        _isLoading = true;
+        StateHasChanged();
+
+        var result = await NexStar.SetLocationAsync(_latitude, _longitude);
+
+        if (result)
+        {
+            _statusMessage = "Location set successfully.";
+            _statusClass = "success";
+        }
+        else
+        {
+            _statusMessage = "Failed to set location.";
+            _statusClass = "error";
+        }
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task GetBrowserLocation()
+    {
+        _isLoading = true;
+        _statusMessage = "Requesting GPS location...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        try
+        {
+            var success = await LocationService.RequestBrowserLocationAsync();
+            if (success && LocationService.Location != null)
+            {
+                _latitude = LocationService.Location.Latitude;
+                _longitude = LocationService.Location.Longitude;
+                _statusMessage = "GPS location obtained.";
+                _statusClass = "success";
+            }
+            else
+            {
+                _statusMessage = "Geolocation not available.";
+                _statusClass = "error";
+            }
+            _isLoading = false;
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Error: {ex.Message}";
+            _statusClass = "error";
+            _isLoading = false;
+        }
+
+        StateHasChanged();
+    }
+}
+
+<style>
+    /* Settings Page - Night Mode Theme */
+    .settings-page {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 1rem;
+        color: #d4d4d8;
+    }
+
+        .settings-page h1 {
+            color: #e4e4e7;
+            margin-bottom: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, #fff 0%, #c53030 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            display: inline-block;
+        }
+
+    .settings-section {
+        background: linear-gradient(180deg, #131318 0%, #0f0f12 100%);
+        border: 1px solid #27272a;
+        border-radius: 16px;
+        padding: 1.5rem;
+        margin-bottom: 1.25rem;
+    }
+
+        .settings-section h2 {
+            margin: 0 0 1rem 0;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #e4e4e7;
+            border-bottom: 1px solid #27272a;
+            padding-bottom: 0.75rem;
+        }
+
+        .settings-section h4 {
+            margin: 1rem 0 0.75rem 0;
+            color: #71717a;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+    .setting-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding: 1rem 0;
+        border-bottom: 1px solid #1f1f23;
+    }
+
+        .setting-row:last-child {
+            border-bottom: none;
+        }
+
+    .setting-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+        .setting-info label {
+            color: #71717a;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .setting-info .value {
+            color: #c53030;
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            font-size: 1rem;
+        }
+
+            .setting-info .value.muted {
+                color: #52525b;
+            }
+
+        .setting-info .detail {
+            color: #52525b;
+            font-size: 0.8rem;
+        }
+
+    .setting-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .input-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .input-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+
+        .input-group label {
+            color: #71717a;
+            font-size: 0.85rem;
+        }
+
+        .input-group input {
+            background: #0a0a0c;
+            border: 1px solid #27272a;
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            color: #d4d4d8;
+            font-size: 1rem;
+            transition: border-color 0.2s ease;
+        }
+
+            .input-group input:focus {
+                outline: none;
+                border-color: #c53030;
+                box-shadow: 0 0 0 3px rgba(197, 48, 48, 0.15);
+            }
+
+        .input-group .hint {
+            color: #52525b;
+            font-size: 0.75rem;
+        }
+
+    .button-row {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .btn {
+        padding: 0.6rem 1rem;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        font-weight: 500;
+        background: #27272a;
+        color: #a1a1aa;
+        border: 1px solid #3f3f46;
+        transition: all 0.2s ease;
+    }
+
+        .btn:hover:not(:disabled) {
+            background: #3f3f46;
+            color: #d4d4d8;
+        }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #c53030 0%, #9b2c2c 100%);
+        color: white;
+        border: none;
+    }
+
+        .btn-primary:hover:not(:disabled) {
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+        }
+
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+    }
+
+    .info-item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+        .info-item label {
+            color: #71717a;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .info-item span {
+            color: #a1a1aa;
+        }
+
+    .divider {
+        height: 1px;
+        background: #27272a;
+        margin: 1rem 0;
+    }
+
+    .alert {
+        padding: 1rem;
+        border-radius: 10px;
+        margin-top: 1rem;
+        border-left: 3px solid;
+    }
+
+        .alert.info {
+            background: rgba(37, 99, 235, 0.15);
+            border-left-color: #3b82f6;
+        }
+
+        .alert.success {
+            background: rgba(22, 163, 74, 0.15);
+            border-left-color: #22c55e;
+        }
+
+        .alert.error {
+            background: rgba(220, 38, 38, 0.15);
+            border-left-color: #dc2626;
+        }
+
+        .alert.warning {
+            background: rgba(202, 138, 4, 0.15);
+            border-left-color: #eab308;
+        }
+
+    @@media (max-width: 600px) {
+        .setting-row {
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .input-row {
+            grid-template-columns: 1fr;
+        }
+
+        .info-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>

@@ -1,0 +1,521 @@
+@page "/objects"
+@using SpawnDev.NexStar.App.Services
+@inject NexStarService NexStar
+@inject LocationService LocationService
+
+<PageTitle>Object Browser - NexStar</PageTitle>
+
+<div class="objects-page">
+    <h1>🌌 Object Browser</h1>
+
+    <!-- Tabs -->
+    <div class="tabs">
+        <button class="tab @(_activeTab == "messier" ? "active" : "")" @onclick="@(() => _activeTab = "messier")">
+            Messier (110)
+        </button>
+        <button class="tab @(_activeTab == "stars" ? "active" : "")" @onclick="@(() => _activeTab = "stars")">
+            Bright Stars (@CelestialCatalogs.AlignmentStars.Count)
+        </button>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters">
+        <div class="filter-group">
+            <label>Constellation:</label>
+            <select @bind="_constellationFilter">
+                <option value="">All</option>
+                @foreach (var con in GetConstellations())
+                {
+                    <option value="@con">@con</option>
+                }
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Max Magnitude:</label>
+            <input type="number" step="0.5" min="0" max="12" @bind="_maxMagnitude" style="width: 80px;" />
+        </div>
+        @if (_activeTab == "messier")
+        {
+            <div class="filter-group">
+                <label>Type:</label>
+                <select @bind="_typeFilter">
+                    <option value="">All</option>
+                    <option value="Galaxy">Galaxies</option>
+                    <option value="Nebula">Nebulae</option>
+                    <option value="Open Cluster">Open Clusters</option>
+                    <option value="Globular Cluster">Globular Clusters</option>
+                    <option value="Planetary Nebula">Planetary Nebulae</option>
+                </select>
+            </div>
+        }
+        <div class="filter-group">
+            <label class="checkbox-label">
+                <input type="checkbox" @bind="_showVisibleOnly" />
+                Visible now only
+            </label>
+        </div>
+        <div class="filter-group search">
+            <label>Search:</label>
+            <input type="text" @bind="_searchQuery" @bind:event="oninput" placeholder="Name or ID..." />
+        </div>
+    </div>
+
+    <!-- Object Grid -->
+    <div class="object-grid">
+        @foreach (var obj in GetFilteredObjects())
+        {
+            <div class="object-card @(IsVisible(obj) ? "visible" : "not-visible")">
+                <div class="object-header">
+                    <span class="object-id">@obj.Id</span>
+                    <span class="object-mag">mag @obj.Magnitude.ToString("F1")</span>
+                </div>
+                @if (!string.IsNullOrEmpty(obj.Name))
+                {
+                    <div class="object-name">@obj.Name</div>
+                }
+                <div class="object-type">@obj.ObjectType</div>
+                <div class="object-coords">
+                    <span>RA: @obj.FormatRA()</span>
+                    <span>Dec: @obj.FormatDec()</span>
+                </div>
+                <div class="object-info">
+                    <span class="constellation">@obj.Constellation</span>
+                    @{
+                        var altAz = GetAltAz(obj);
+                    }
+                    @if (altAz != null)
+                    {
+                        <span class="altitude @(altAz.Altitude > 0 ? "up" : "down")">
+                            Alt: @altAz.Altitude.ToString("F0")°
+                        </span>
+                    }
+                </div>
+                <div class="object-actions">
+                    <button class="btn btn-sm btn-primary" @onclick="@(() => GotoObject(obj))" 
+                            disabled="@(!NexStar.ComsEnabled)">
+                        🎯 GoTo
+                    </button>
+                    <button class="btn btn-sm" @onclick="@(() => SyncObject(obj))"
+                            disabled="@(!NexStar.ComsEnabled)">
+                        ⚓ Sync
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (!GetFilteredObjects().Any())
+    {
+        <div class="no-results">
+            <p>No objects match your filters.</p>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(_statusMessage))
+    {
+        <div class="status-bar @_statusClass">@_statusMessage</div>
+    }
+</div>
+
+@code {
+    private string _activeTab = "messier";
+    private string _constellationFilter = "";
+    private string _typeFilter = "";
+    private double _maxMagnitude = 10;
+    private bool _showVisibleOnly = false;
+    private string _searchQuery = "";
+    private string _statusMessage = "";
+    private string _statusClass = "";
+
+    private IEnumerable<string> GetConstellations()
+    {
+        var objects = _activeTab == "messier" 
+            ? CelestialCatalogs.Messier.Cast<CelestialObject>() 
+            : CelestialCatalogs.AlignmentStars.Cast<CelestialObject>();
+        return objects.Select(o => o.Constellation).Distinct().OrderBy(c => c);
+    }
+
+    private IEnumerable<CelestialObject> GetFilteredObjects()
+    {
+        IEnumerable<CelestialObject> objects = _activeTab == "messier" 
+            ? CelestialCatalogs.Messier 
+            : CelestialCatalogs.AlignmentStars;
+
+        // Filter by constellation
+        if (!string.IsNullOrEmpty(_constellationFilter))
+        {
+            objects = objects.Where(o => o.Constellation == _constellationFilter);
+        }
+
+        // Filter by magnitude
+        objects = objects.Where(o => o.Magnitude <= _maxMagnitude);
+
+        // Filter by type (Messier only)
+        if (_activeTab == "messier" && !string.IsNullOrEmpty(_typeFilter))
+        {
+            objects = objects.Where(o => o.ObjectType.Contains(_typeFilter));
+        }
+
+        // Filter by visibility
+        if (_showVisibleOnly && LocationService.Location != null)
+        {
+            objects = objects.Where(o => IsVisible(o));
+        }
+
+        // Filter by search query
+        if (!string.IsNullOrEmpty(_searchQuery))
+        {
+            var query = _searchQuery.ToLower();
+            objects = objects.Where(o => 
+                o.Id.ToLower().Contains(query) || 
+                o.Name.ToLower().Contains(query) ||
+                o.Constellation.ToLower().Contains(query));
+        }
+
+        return objects.OrderBy(o => o.Magnitude);
+    }
+
+    private bool IsVisible(CelestialObject obj)
+    {
+        var altAz = GetAltAz(obj);
+        return altAz != null && altAz.Altitude > 0;
+    }
+
+    private AzAltCoordinates? GetAltAz(CelestialObject obj)
+    {
+        if (LocationService.Location == null) return null;
+        
+        return AstronomyMath.EquatorialToHorizontal(
+            obj.RightAscension, 
+            obj.Declination,
+            LocationService.Location.Latitude,
+            LocationService.Location.Longitude,
+            DateTime.UtcNow);
+    }
+
+    private async Task GotoObject(CelestialObject obj)
+    {
+        _statusMessage = $"Slewing to {obj.DisplayName}...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        var result = await NexStar.GotoRaDecAsync(obj.RightAscension, obj.Declination);
+        
+        if (result)
+        {
+            _statusMessage = $"GoTo {obj.DisplayName} initiated.";
+            _statusClass = "success";
+        }
+        else
+        {
+            _statusMessage = "GoTo failed.";
+            _statusClass = "error";
+        }
+        StateHasChanged();
+    }
+
+    private async Task SyncObject(CelestialObject obj)
+    {
+        _statusMessage = $"Syncing to {obj.DisplayName}...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        var result = await NexStar.SyncRaDecAsync(obj.RightAscension, obj.Declination);
+        
+        if (result)
+        {
+            _statusMessage = $"Synced to {obj.DisplayName}.";
+            _statusClass = "success";
+        }
+        else
+        {
+            _statusMessage = "Sync failed.";
+            _statusClass = "error";
+        }
+        StateHasChanged();
+    }
+}
+
+<style>
+    /* Object Browser - Night Mode Theme */
+    .objects-page {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 1rem;
+        color: #d4d4d8;
+    }
+
+    .objects-page h1 {
+        color: #e4e4e7;
+        margin-bottom: 1.5rem;
+        font-weight: 600;
+        background: linear-gradient(135deg, #fff 0%, #c53030 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        display: inline-block;
+    }
+
+    .tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 0;
+    }
+
+    .tab {
+        padding: 0.75rem 1.5rem;
+        background: #1a1a22;
+        border: 1px solid #27272a;
+        border-bottom: none;
+        border-radius: 12px 12px 0 0;
+        color: #71717a;
+        cursor: pointer;
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
+    }
+
+    .tab:hover {
+        color: #a1a1aa;
+        background: #27272a;
+    }
+
+    .tab.active {
+        background: #131318;
+        color: #d4d4d8;
+        border-color: rgba(197, 48, 48, 0.3);
+        border-bottom: 1px solid #131318;
+    }
+
+    .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        padding: 1.25rem;
+        background: linear-gradient(180deg, #131318 0%, #0f0f12 100%);
+        border: 1px solid #27272a;
+        border-radius: 0 12px 12px 12px;
+        margin-bottom: 1.5rem;
+    }
+
+    .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .filter-group label {
+        color: #71717a;
+        font-size: 0.85rem;
+    }
+
+    .filter-group select,
+    .filter-group input[type="text"],
+    .filter-group input[type="number"] {
+        background: #0a0a0c;
+        border: 1px solid #27272a;
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
+        color: #d4d4d8;
+        transition: border-color 0.2s ease;
+    }
+
+    .filter-group select:focus,
+    .filter-group input:focus {
+        border-color: #c53030;
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(197, 48, 48, 0.15);
+    }
+
+    .filter-group.search {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .filter-group.search input {
+        flex: 1;
+    }
+
+    .checkbox-label {
+        cursor: pointer;
+        color: #a1a1aa;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+        accent-color: #c53030;
+    }
+
+    .object-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1rem;
+    }
+
+    .object-card {
+        background: linear-gradient(180deg, #131318 0%, #0f0f12 100%);
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        padding: 1rem;
+        border-left: 3px solid #c53030;
+        transition: all 0.2s ease;
+    }
+
+    .object-card:hover {
+        border-color: rgba(197, 48, 48, 0.4);
+        transform: translateY(-2px);
+    }
+
+    .object-card.not-visible {
+        opacity: 0.5;
+        border-left-color: #3f3f46;
+    }
+
+    .object-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 0.5rem;
+    }
+
+    .object-id {
+        font-weight: 600;
+        font-size: 1.1rem;
+        color: #c53030;
+    }
+
+    .object-mag {
+        color: #fbbf24;
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+
+    .object-name {
+        font-size: 1rem;
+        color: #e4e4e7;
+        margin-bottom: 0.25rem;
+        font-weight: 500;
+    }
+
+    .object-type {
+        color: #71717a;
+        font-size: 0.8rem;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .object-coords {
+        display: flex;
+        flex-direction: column;
+        gap: 0.125rem;
+        font-family: 'JetBrains Mono', 'Consolas', monospace;
+        font-size: 0.75rem;
+        color: #52525b;
+        margin-bottom: 0.5rem;
+    }
+
+    .object-info {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.8rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .constellation {
+        color: #a78bfa;
+    }
+
+    .altitude.up {
+        color: #4ade80;
+    }
+
+    .altitude.down {
+        color: #f87171;
+    }
+
+    .object-actions {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .btn {
+        padding: 0.5rem 1rem;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+
+    .btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    .btn-sm {
+        padding: 0.4rem 0.8rem;
+        font-size: 0.75rem;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #c53030 0%, #9b2c2c 100%);
+        color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+        background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+        transform: translateY(-1px);
+    }
+
+    .btn:not(.btn-primary) {
+        background: #27272a;
+        color: #a1a1aa;
+        border: 1px solid #3f3f46;
+    }
+
+    .btn:not(.btn-primary):hover:not(:disabled) {
+        background: #3f3f46;
+        color: #d4d4d8;
+    }
+
+    .no-results {
+        text-align: center;
+        padding: 3rem;
+        color: #52525b;
+    }
+
+    .status-bar {
+        position: fixed;
+        bottom: 1rem;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 0.75rem 1.5rem;
+        border-radius: 10px;
+        color: white;
+        z-index: 100;
+        font-size: 0.9rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    }
+
+    .status-bar.info { 
+        background: rgba(37, 99, 235, 0.9);
+        border: 1px solid #3b82f6;
+    }
+    .status-bar.success { 
+        background: rgba(22, 163, 74, 0.9);
+        border: 1px solid #22c55e;
+    }
+    .status-bar.error { 
+        background: rgba(220, 38, 38, 0.9);
+        border: 1px solid #dc2626;
+    }
+
+    @@media (max-width: 768px) {
+        .filters {
+            flex-direction: column;
+        }
+
+        .object-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>

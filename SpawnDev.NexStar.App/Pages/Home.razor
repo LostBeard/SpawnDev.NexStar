@@ -1,0 +1,1379 @@
+﻿@page "/"
+@inject NexStarService NexStar
+@inject SpawnJSRuntime JS
+@implements IDisposable
+@using SpawnDev.SpawnJS.JSObjects
+
+<PageTitle>NexStar Telescope Control</PageTitle>
+
+<div class="telescope-app">
+    <!-- Header -->
+    <header class="app-header">
+        <h1>🔭 NexStar Telescope Control</h1>
+        <div class="connection-status">
+            @if (NexStar.ComsEnabled)
+            {
+                <span class="status connected">Connected</span>
+                <span class="model-info">@NexStar.Model.GetDisplayName() @NexStar.Version</span>
+            }
+            else if (NexStar.SerialPortSelected)
+            {
+                <span class="status ready">Ready</span>
+            }
+            else
+            {
+                <span class="status disconnected">Disconnected</span>
+            }
+        </div>
+    </header>
+
+    <main class="app-main">
+        <!-- Connection Panel -->
+        <section class="panel connection-panel">
+            <h2>Connection</h2>
+            <div class="button-row">
+                @if (!NexStar.SerialPortSelected || !NexStar.ComsEnabled)
+                {
+                    <button class="btn btn-primary" @onclick="ConnectSerial" disabled="@_isLoading">
+                        <span class="icon">🔌</span> Connect Serial
+                    </button>
+                    <button class="btn btn-primary" @onclick="ConnectUSB" disabled="@_isLoading">
+                        <span class="icon">🔌</span> Connect USB
+                    </button>
+                }
+                else
+                {
+                    <button class="btn btn-danger" @onclick="Disconnect" disabled="@_isLoading">
+                        <span class="icon">■</span> Disconnect
+                    </button>
+                    <button class="btn btn-secondary" @onclick="RefreshInfo" disabled="@_isLoading">
+                        <span class="icon">↻</span> Refresh
+                    </button>
+                }
+            </div>
+            <div class="info-grid @(!NexStar.ComsEnabled ? "disabled-section" : "")">
+                <div class="info-item">
+                    <label>Alignment</label>
+                    <span class="@(NexStar.IsAligned ? "status-good" : "status-warn")">
+                        @(NexStar.ComsEnabled ? (NexStar.IsAligned ? "Aligned" : "Not Aligned") : "—")
+                    </span>
+                </div>
+                <div class="info-item">
+                    <label>Tracking</label>
+                    <span>@(NexStar.ComsEnabled? NexStar.CurrentTrackingMode.ToString() : "—")</span>
+                </div>
+            </div>
+            @if (NexStar.ComsEnabled)
+            {
+                <div class="divider"></div>
+                <!-- Time Drift -->
+                <div class="sync-row">
+                    <div class="sync-details">
+                        <div class="sync-header">
+                            <label>Time Sync</label>
+                            <span class="@GetTimeDriftClass()">
+                                @(_timeDiff.TotalSeconds >= 0 ? "+" : "")@GetFriendlyTimeSpan(_timeDiff) Diff
+                            </span>
+                        </div>
+                        <div class="sync-values">
+                            <div class="value-pair">
+                                <span class="label">Device:</span>
+                                <span class="value">@(_telescopeTime?.LocalTime.ToString("HH:mm:ss") ?? "--:--:--")</span>
+                            </div>
+                            <div class="value-pair">
+                                <span class="label">Browser:</span>
+                                <span class="value">@DateTime.Now.ToString("HH:mm:ss")</span>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-sm" @onclick="SyncTime" disabled="@(_isLoading)">Sync</button>
+                </div>
+
+                <!-- Location Drift -->
+                <div class="sync-row">
+                    <div class="sync-details">
+                        <div class="sync-header">
+                            <label>Location Sync</label>
+                            <span class="@GetLocationDriftClass()">
+                                @if (_browserLat != null)
+                                {
+                                    @($"{Math.Round(_locationDiffKm, 2)} km")
+                                }
+                                else
+                                {
+                                    <span class="muted">Waiting for GPS...</span>
+                                }
+                            </span>
+                        </div>
+                        <div class="sync-values">
+                            <div class="value-pair">
+                                <span class="label">Device:</span>
+                                <span class="value">
+                                    @if (NexStar.Location != null)
+                                    {
+                                        var lat = NexStar.Location.Latitude;
+                                        var lon = NexStar.Location.Longitude;
+                                        @($"{Math.Abs(lat):F4}°{(lat >= 0 ? "N" : "S")}, {Math.Abs(lon):F4}°{(lon >= 0 ? "E" : "W")}")
+                                    }
+                                    else
+                                    {
+                                        @("--")
+                                    }
+                                </span>
+                            </div>
+                            <div class="value-pair">
+                                <span class="label">Browser:</span>
+                                <span class="value">
+                                    @if (_browserLat != null && _browserLon != null)
+                                    {
+                                        var lat = _browserLat.Value;
+                                        var lon = _browserLon.Value;
+                                        @($"{Math.Abs(lat):F4}°{(lat >= 0 ? "N" : "S")}, {Math.Abs(lon):F4}°{(lon >= 0 ? "E" : "W")}")
+                                    }
+                                    else
+                                    {
+                                        @("--")
+                                    }
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-sm" @onclick="SyncLocation" disabled="@(_isLoading)">Sync</button>
+                </div>
+            }
+        </section>
+
+        <!-- Position Display -->
+        <section class="panel position-panel @(!NexStar.ComsEnabled ? "disabled-panel" : "")">
+            <h2>Position</h2>
+            <div class="position-grid">
+                <div class="position-card">
+                    <h3>Equatorial (RA/Dec)</h3>
+                    @if (NexStar.CurrentRaDec != null)
+                    {
+                        <div class="coord-row">
+                            <label>RA:</label>
+                            <span class="coord-value">@NexStar.CurrentRaDec.FormatRA()</span>
+                        </div>
+                        <div class="coord-row">
+                            <label>Dec:</label>
+                            <span class="coord-value">@NexStar.CurrentRaDec.FormatDec()</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="no-data">No data</p>
+                    }
+                </div>
+                <div class="position-card">
+                    <h3>Horizontal (Az/Alt)</h3>
+                    @if (NexStar.CurrentAzAlt != null)
+                    {
+                        <div class="coord-row">
+                            <label>Az:</label>
+                            <span class="coord-value">@NexStar.CurrentAzAlt.FormatAz()</span>
+                        </div>
+                        <div class="coord-row">
+                            <label>Alt:</label>
+                            <span class="coord-value">@NexStar.CurrentAzAlt.FormatAlt()</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="no-data">No data</p>
+                    }
+                </div>
+            </div>
+            <div class="button-row">
+                <button class="btn btn-sm" @onclick="UpdatePosition" disabled="@(_isLoading || !NexStar.ComsEnabled)">
+                    ↻ Update Position
+                </button>
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="_autoUpdatePosition" disabled="@(!NexStar.ComsEnabled)" />
+                    Auto-update
+                </label>
+            </div>
+        </section>
+
+        <!-- Quick Access -->
+        <section class="panel quick-access-panel @(!NexStar.ComsEnabled ? "disabled-panel" : "")">
+            <h2>🎯 Quick Access</h2>
+            <div class="quick-targets">
+                <div class="quick-targets">
+                    @foreach (var target in _quickTargets)
+                    {
+                        <button class="quick-btn" @onclick="@(() => QuickGoto(target))"
+                                disabled="@(!NexStar.ComsEnabled)">
+                            @target.DisplayName
+                        </button>
+                    }
+                </div>
+            </div>
+            <div class="quick-links">
+                <a href="objects" class="link-btn">🌌 Object Browser</a>
+                <a href="alignment" class="link-btn">⭐ Alignment Helper</a>
+            </div>
+        </section>
+
+        <!-- Manual Slew Controls -->
+        <section class="panel slew-panel @(!NexStar.ComsEnabled ? "disabled-panel" : "")">
+            <h2>Manual Slew</h2>
+            <div class="slew-controls">
+                <div class="dpad">
+                    <button type="button" class="dpad-btn north"
+                            @onclick="@(async () => await SlewNorth())"
+                            disabled="@(!NexStar.ComsEnabled)">
+                        ▲<br />N
+                    </button>
+                    <button type="button" class="dpad-btn west"
+                            @onclick="@(async () => await SlewWest())"
+                            disabled="@(!NexStar.ComsEnabled)">
+                        ◀ W
+                    </button>
+                    <button type="button" class="dpad-btn stop" @onclick="StopAll" disabled="@(!NexStar.ComsEnabled)">■</button>
+                    <button type="button" class="dpad-btn east"
+                            @onclick="@(async () => await SlewEast())"
+                            disabled="@(!NexStar.ComsEnabled)">
+                        E ▶
+                    </button>
+                    <button type="button" class="dpad-btn south"
+                            @onclick="@(async () => await SlewSouth())"
+                            disabled="@(!NexStar.ComsEnabled)">
+                        S<br />▼
+                    </button>
+                </div>
+                <div class="slew-rate-control">
+                    <label>Slew Rate: @_slewRate</label>
+                    <input type="range" min="1" max="9" @bind="_slewRate" @bind:event="oninput" disabled="@(!NexStar.ComsEnabled)" />
+                    <div class="rate-labels">
+                        <span>Slow</span>
+                        <span>Fast</span>
+                    </div>
+                </div>
+            </div>
+            <p class="slew-hint">@(NexStar.ComsEnabled ? "Click a direction to start slewing. Click ■ to stop." : "Connect to telescope to enable slewing controls.")</p>
+        </section>
+
+
+        <!-- GoTo Panel -->
+        <section class="panel goto-panel @(!NexStar.ComsEnabled ? "disabled-panel" : "")">
+            <h2>GoTo Coordinates</h2>
+            <div class="goto-form">
+                <div class="input-group">
+                    <label>RA (hours):</label>
+                    <input type="number" step="0.001" min="0" max="24" @bind="_gotoRaHours" placeholder="0.000" disabled="@(!NexStar.ComsEnabled)" />
+                </div>
+                <div class="input-group">
+                    <label>Dec (degrees):</label>
+                    <input type="number" step="0.01" min="-90" max="90" @bind="_gotoDec" placeholder="0.00" disabled="@(!NexStar.ComsEnabled)" />
+                </div>
+                <div class="button-row">
+                    <button class="btn btn-primary" @onclick="ExecuteGoto" disabled="@(_isLoading || !NexStar.ComsEnabled)">
+                        🎯 Go To
+                    </button>
+                    <button class="btn btn-warning" @onclick="CancelGoto" disabled="@(_isLoading || !NexStar.ComsEnabled)">
+                        ✕ Cancel
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tracking Mode -->
+        <section class="panel tracking-panel @(!NexStar.ComsEnabled ? "disabled-panel" : "")">
+            <h2>Tracking</h2>
+            <div class="tracking-buttons">
+                @foreach (TrackingMode mode in Enum.GetValues<TrackingMode>())
+                {
+                    <button class="btn @(NexStar.CurrentTrackingMode == mode ? "btn-primary" : "btn-secondary")"
+                            @onclick="@(() => SetTracking(mode))"
+                            disabled="@(_isLoading || !NexStar.ComsEnabled)">
+                        @mode
+                    </button>
+                }
+            </div>
+        </section>
+
+    </main>
+</div>
+
+@code {
+    private bool _isLoading = false;
+    private string _statusMessage = "";
+    private string _statusClass = "";
+    private int _slewRate = 5;
+    private double _gotoRaHours = 0;
+    private double _gotoDec = 0;
+    private bool _autoUpdatePosition = false;
+
+    private TelescopeTime? _telescopeTime;
+    private System.Timers.Timer? _positionTimer;
+
+    // Sync Status
+    private TimeSpan _timeDiff;
+    private double _locationDiffKm;
+    private double? _browserLat;
+    private double? _browserLon;
+    private int _timerTicks = 0;
+
+    // Quick Targets Cache
+    private List<CelestialObject> _quickTargets = new();
+
+    // Limits
+    private const double TIME_DIFF_THRESHOLD_WARN = 60; // 1 min
+    private const double TIME_DIFF_THRESHOLD_ERR = 300; // 5 mins
+    private const double DIST_DIFF_THRESHOLD_WARN = 2.0; // km
+    private const double DIST_DIFF_THRESHOLD_ERR = 20.0; // km
+
+    protected override void OnInitialized()
+    {
+        NexStar.OnStatusChanged += HandleStatusChanged;
+        _positionTimer = new System.Timers.Timer(1000);
+        _positionTimer.Elapsed += async (s, e) =>
+        {
+            await AutoUpdatePosition();
+            _timerTicks++;
+            if (_timerTicks % 60 == 0) // Every 60 seconds
+            {
+                await InvokeAsync(async () =>
+                {
+                    if (NexStar.ComsEnabled)
+                    {
+                        await GetTime();
+                        await CheckSyncStatus();
+                    }
+                });
+            }
+        };
+        _positionTimer.Start();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && NexStar.ComsEnabled)
+        {
+            await RestoreState();
+        }
+    }
+
+    private async Task RestoreState()
+    {
+        _statusMessage = $"Connected to {NexStar.Model.GetDisplayName()}";
+        _statusClass = "success";
+
+        // Refresh all data
+        await UpdatePosition();
+        await GetTime();
+        // Recalculate quick targets based on location
+        RefreshQuickTargets();
+
+        // Trigger sync check
+        await CheckSyncStatus();
+
+        StateHasChanged();
+    }
+
+    private async Task DeselectPort()
+    {
+        _isLoading = true;
+        await NexStar.DeselectPortAsync();
+        _statusMessage = "";
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private Task ConnectUSB() => Connect(true);
+    private Task ConnectSerial() => Connect(false);
+    private async Task Connect(bool useWebUSB = false)
+    {
+        _isLoading = true;
+        _statusMessage = "Connecting...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        await NexStar.SelectPortAsync(useWebUSB);
+
+        if (NexStar.ComsEnabled)
+        {
+            _statusMessage = $"Connected to {NexStar.Model.GetDisplayName()}";
+            _statusClass = "success";
+            await UpdatePosition();
+            await GetTime();
+            await NexStar.GetLocationAsync();
+            RefreshQuickTargets();
+            await CheckSyncStatus();
+        }
+        else
+        {
+            _statusMessage = "Connection failed.";
+            _statusClass = "error";
+        }
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task Disconnect()
+    {
+        _isLoading = true;
+        _positionTimer?.Stop();
+        await NexStar.DeselectPortAsync();
+        _statusMessage = "Disconnected.";
+        _statusClass = "info";
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task RefreshInfo()
+    {
+        _isLoading = true;
+        await NexStar.RefreshTelescopeInfoAsync();
+        await UpdatePosition();
+        await GetTime();
+        await NexStar.GetLocationAsync();
+        await CheckSyncStatus();
+        RefreshQuickTargets();
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task UpdatePosition()
+    {
+        await NexStar.GetRaDecAsync();
+        await NexStar.GetAzAltAsync();
+        StateHasChanged();
+    }
+
+    private async Task AutoUpdatePosition()
+    {
+        if (_autoUpdatePosition && NexStar.ComsEnabled)
+        {
+            await UpdatePosition();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SlewNorth()
+    {
+        var rate = (SlewRate)_slewRate;
+
+        var result = await NexStar.SlewFixedAsync(SlewAxis.DecAlt, SlewDirection.Positive, rate);
+        _statusMessage = result ? $"Slewing North at rate {_slewRate}" : "Slew command failed";
+        _statusClass = result ? "info" : "error";
+        StateHasChanged();
+    }
+
+    private async Task SlewSouth()
+    {
+        var rate = (SlewRate)_slewRate;
+        var result = await NexStar.SlewFixedAsync(SlewAxis.DecAlt, SlewDirection.Negative, rate);
+        _statusMessage = result ? $"Slewing South at rate {_slewRate}" : "Slew command failed";
+        _statusClass = result ? "info" : "error";
+        StateHasChanged();
+    }
+
+    private async Task SlewEast()
+    {
+        var rate = (SlewRate)_slewRate;
+        var result = await NexStar.SlewFixedAsync(SlewAxis.RaAzm, SlewDirection.Positive, rate);
+        _statusMessage = result ? $"Slewing East at rate {_slewRate}" : "Slew command failed";
+        _statusClass = result ? "info" : "error";
+        StateHasChanged();
+    }
+
+    private async Task SlewWest()
+    {
+        var rate = (SlewRate)_slewRate;
+        var result = await NexStar.SlewFixedAsync(SlewAxis.RaAzm, SlewDirection.Negative, rate);
+        _statusMessage = result ? $"Slewing West at rate {_slewRate}" : "Slew command failed";
+        _statusClass = result ? "info" : "error";
+        StateHasChanged();
+    }
+
+    private async Task StopAll()
+    {
+        await NexStar.StopAllSlewAsync();
+        await NexStar.CancelGotoAsync();
+        _statusMessage = "All motion stopped.";
+        _statusClass = "warning";
+        StateHasChanged();
+    }
+
+    private IEnumerable<CelestialObject> GetQuickTargets()
+    {
+        return _quickTargets;
+    }
+
+    private async Task QuickGoto(CelestialObject target)
+    {
+        _statusMessage = $"Slewing to {target.DisplayName}...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        var result = await NexStar.GotoRaDecAsync(target.RightAscension, target.Declination);
+
+        if (result)
+        {
+            _statusMessage = $"GoTo {target.DisplayName} initiated.";
+            _statusClass = "success";
+        }
+        else
+        {
+            _statusMessage = "GoTo failed.";
+            _statusClass = "error";
+        }
+        StateHasChanged();
+    }
+
+    private async Task ExecuteGoto()
+    {
+        _isLoading = true;
+        _statusMessage = "Slewing to target...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        // Convert RA from hours to degrees
+        var raDeg = _gotoRaHours * 15.0;
+        var result = await NexStar.GotoRaDecAsync(raDeg, _gotoDec);
+
+        if (result)
+        {
+            _statusMessage = "GoTo command sent.";
+            _statusClass = "success";
+        }
+        else
+        {
+            _statusMessage = "GoTo failed.";
+            _statusClass = "error";
+        }
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task CancelGoto()
+    {
+        await NexStar.CancelGotoAsync();
+        _statusMessage = "GoTo cancelled.";
+        _statusClass = "warning";
+        StateHasChanged();
+    }
+
+    private async Task SetTracking(TrackingMode mode)
+    {
+        _isLoading = true;
+        await NexStar.SetTrackingModeAsync(mode);
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task GetTime()
+    {
+        _telescopeTime = await NexStar.GetTimeAsync();
+        StateHasChanged();
+    }
+
+    private async Task SyncTime()
+    {
+        _isLoading = true;
+        var result = await NexStar.SyncTimeAsync();
+        if (result)
+        {
+            _statusMessage = "Time synced.";
+            _statusClass = "success";
+            await GetTime();
+        }
+        else
+        {
+            _statusMessage = "Time sync failed.";
+            _statusClass = "error";
+        }
+        _isLoading = false;
+        await CheckSyncStatus();
+        StateHasChanged();
+    }
+
+    private async Task SyncLocation()
+    {
+        _isLoading = true;
+        _statusMessage = "Requesting Browser Location...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        try
+        {
+            using var navigator = JS.Get<SpawnDev.SpawnJS.JSObjects.Navigator>("navigator");
+            using var geolocation = navigator.Geolocation;
+            if (geolocation == null)
+            {
+                _statusMessage = "Geolocation not supported.";
+                _statusClass = "error";
+            }
+            else
+            {
+                var pos = await geolocation.GetCurrentPositionAsync();
+                var lat = pos.Coords.Latitude;
+                var lon = pos.Coords.Longitude;
+
+                _statusMessage = "Setting telescope location...";
+                StateHasChanged();
+
+                var success = await NexStar.SetLocationAsync(lat, lon);
+                if (success)
+                {
+                    _statusMessage = "Location updated.";
+                    _statusClass = "success";
+                    await GetLocation(); // Refresh from scope
+                }
+                else
+                {
+                    _statusMessage = "Failed to set location.";
+                    _statusClass = "error";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = "Sync failed: " + ex.Message;
+            _statusClass = "error";
+        }
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task GetLocation()
+    {
+        await NexStar.GetLocationAsync();
+        RefreshQuickTargets();
+        await CheckSyncStatus();
+        StateHasChanged();
+    }
+
+    private async Task CheckSyncStatus()
+    {
+        if (!NexStar.ComsEnabled) return;
+
+        if (_telescopeTime != null)
+        {
+            var now = DateTime.Now;
+            var scopeTime = _telescopeTime.LocalTime;
+            _timeDiff = scopeTime - now;
+        }
+
+        // 2. Location Check
+        // If we don't have browser location yet, try to get it (silently/quickly)
+        if (_browserLat == null)
+        {
+            try
+            {
+                using var navigator = JS.Get<SpawnDev.SpawnJS.JSObjects.Navigator>("navigator");
+                using var geolocation = navigator.Geolocation;
+                if (geolocation != null)
+                {
+                    // Use a short timeout to avoid blocking
+                    var pos = await geolocation.GetCurrentPositionAsync();
+                    _browserLat = pos.Coords.Latitude;
+                    _browserLon = pos.Coords.Longitude;
+                }
+            }
+            catch { /* Ignore silent failure */ }
+        }
+
+        if (_browserLat != null && _browserLon != null && NexStar.Location != null)
+        {
+            _locationDiffKm = AstronomyMath.CalculateDistanceKm(_browserLat.Value, _browserLon.Value, NexStar.Location.Latitude, NexStar.Location.Longitude);
+        }
+    }
+
+    private string GetTimeDriftClass()
+    {
+        var absSeconds = Math.Abs(_timeDiff.TotalSeconds);
+        if (absSeconds < TIME_DIFF_THRESHOLD_WARN) return "status-good";
+        if (absSeconds < TIME_DIFF_THRESHOLD_ERR) return "status-warn";
+        return "status-error";
+    }
+
+    private string GetLocationDriftClass()
+    {
+        if (_browserLat == null) return "muted";
+        if (_locationDiffKm < DIST_DIFF_THRESHOLD_WARN) return "status-good";
+        if (_locationDiffKm < DIST_DIFF_THRESHOLD_ERR) return "status-warn";
+        return "status-error";
+    }
+
+    private string GetFriendlyTimeSpan(TimeSpan ts)
+    {
+        if (Math.Abs(ts.TotalSeconds) < 60) return $"{Math.Round(ts.TotalSeconds)}s";
+        return $"{Math.Round(ts.TotalMinutes)}m";
+    }
+
+    private void RefreshQuickTargets()
+    {
+        _quickTargets = NexStar.GetVisibleQuickTargets().ToList();
+    }
+
+    private void HandleStatusChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        NexStar.OnStatusChanged -= HandleStatusChanged;
+        _positionTimer?.Stop();
+        _positionTimer?.Dispose();
+    }
+}
+
+<style>
+    /* ========================================
+           Home Page - Night Mode Theme
+           Optimized for low-light astronomical viewing
+           ======================================== */
+
+    .telescope-app {
+        font-family: 'Inter', 'Segoe UI', -apple-system, sans-serif;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 1rem;
+        color: #d4d4d8;
+    }
+
+    .app-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1.25rem 1.5rem;
+        background: linear-gradient(135deg, #0d0d10 0%, #131318 100%);
+        border: 1px solid rgba(197, 48, 48, 0.2);
+        color: white;
+        border-radius: 16px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
+        .app-header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, #fff 0%, #c53030 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+    .connection-status {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .status {
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+        .status::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status.connected {
+            color: #4ade80;
+        }
+
+            .status.connected::before {
+                background: #4ade80;
+                box-shadow: 0 0 10px #4ade80;
+            }
+
+        .status.ready {
+            color: #fbbf24;
+        }
+
+            .status.ready::before {
+                background: #fbbf24;
+                box-shadow: 0 0 10px #fbbf24;
+            }
+
+        .status.disconnected {
+            color: #71717a;
+        }
+
+            .status.disconnected::before {
+                background: #71717a;
+            }
+
+    .model-info {
+        color: #71717a;
+        font-size: 0.85rem;
+    }
+
+    .app-main {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 1.25rem;
+    }
+
+    .panel {
+        background: linear-gradient(180deg, #131318 0%, #0f0f12 100%);
+        border: 1px solid #27272a;
+        border-radius: 16px;
+        padding: 1.5rem;
+        color: #d4d4d8;
+        transition: border-color 0.3s ease;
+    }
+
+        .panel:hover {
+            border-color: rgba(197, 48, 48, 0.3);
+        }
+
+        .panel.disabled-panel {
+            opacity: 0.6;
+            border-color: #1f1f23;
+        }
+
+            .panel.disabled-panel:hover {
+                border-color: #1f1f23;
+            }
+
+            .panel.disabled-panel h2::after {
+                content: ' (Connect to enable)';
+                font-size: 0.7rem;
+                font-weight: 400;
+                color: #52525b;
+                margin-left: 0.5rem;
+            }
+
+    .disabled-section {
+        opacity: 0.5;
+    }
+
+    .panel h2 {
+        margin: 0 0 1.25rem 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #e4e4e7;
+        border-bottom: 1px solid #27272a;
+        padding-bottom: 0.75rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .button-row {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .btn {
+        padding: 0.75rem 1.25rem;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        font-weight: 500;
+        transition: all 0.2s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #c53030 0%, #9b2c2c 100%);
+        color: white;
+        box-shadow: 0 2px 10px rgba(197, 48, 48, 0.3);
+    }
+
+        .btn-primary:hover:not(:disabled) {
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+            transform: translateY(-1px);
+        }
+
+    .btn-success {
+        background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+        color: white;
+    }
+
+        .btn-success:hover:not(:disabled) {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        }
+
+    .btn-danger {
+        background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+        color: white;
+    }
+
+        .btn-danger:hover:not(:disabled) {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+    .btn-warning {
+        background: linear-gradient(135deg, #ca8a04 0%, #a16207 100%);
+        color: white;
+    }
+
+        .btn-warning:hover:not(:disabled) {
+            background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%);
+        }
+
+    .btn-secondary {
+        background: #27272a;
+        color: #a1a1aa;
+        border: 1px solid #3f3f46;
+    }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #3f3f46;
+            color: #d4d4d8;
+        }
+
+    .btn-sm {
+        padding: 0.5rem 1rem;
+        font-size: 0.8rem;
+    }
+
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    .info-item label {
+        display: block;
+        color: #71717a;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.25rem;
+    }
+
+    .status-good {
+        color: #4ade80;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+
+    .status-warn {
+        color: #fbbf24;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+
+    .status-error {
+        color: #f87171;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+
+    .status-good::before {
+        content: '✓';
+    }
+
+    .status-warn::before {
+        content: '⚠';
+    }
+
+    .status-error::before {
+        content: '✖';
+    }
+
+    .status-message {
+        margin-top: 1rem;
+        padding: 0.75rem 1rem;
+        border-radius: 10px;
+        font-size: 0.9rem;
+        border-left: 3px solid;
+    }
+
+    .sync-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid #1f1f23;
+        gap: 1rem;
+    }
+
+        .sync-row:last-child {
+            border-bottom: none;
+        }
+
+    .sync-details {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .sync-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.25rem;
+    }
+
+        .sync-header label {
+            color: #a1a1aa;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+        }
+
+    .sync-values {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+        font-size: 0.85rem;
+        color: #d4d4d8;
+    }
+
+    .value-pair {
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+    }
+
+        .value-pair .label {
+            color: #71717a;
+            width: 60px;
+            font-size: 0.75rem;
+        }
+
+        .value-pair .value {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+    .status-message.flex-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+    }
+
+    .status-message.info {
+        background: rgba(37, 99, 235, 0.15);
+        border-left-color: #3b82f6;
+    }
+
+    .status-message.success {
+        background: rgba(22, 163, 74, 0.15);
+        border-left-color: #22c55e;
+    }
+
+    .status-message.error {
+        background: rgba(220, 38, 38, 0.15);
+        border-left-color: #dc2626;
+    }
+
+    .status-message.warning {
+        background: rgba(202, 138, 4, 0.15);
+        border-left-color: #eab308;
+    }
+
+    .position-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+    }
+
+    .position-card {
+        background: #0a0a0c;
+        padding: 1rem;
+        border-radius: 12px;
+        border: 1px solid #1f1f23;
+    }
+
+        .position-card h3 {
+            margin: 0 0 0.75rem 0;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #71717a;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+    .coord-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.35rem 0;
+    }
+
+        .coord-row label {
+            color: #52525b;
+        }
+
+    .coord-value {
+        font-family: 'JetBrains Mono', 'Consolas', monospace;
+        color: #c53030;
+        font-weight: 500;
+    }
+
+    .no-data {
+        color: #52525b;
+        font-style: italic;
+    }
+
+    .checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #71717a;
+        cursor: pointer;
+        font-size: 0.9rem;
+    }
+
+        .checkbox-label input[type="checkbox"] {
+            accent-color: #c53030;
+        }
+
+    .slew-controls {
+        display: flex;
+        gap: 2rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .dpad {
+        display: grid;
+        grid-template-areas:
+            ". north ."
+            "west stop east"
+            ". south .";
+        grid-template-columns: repeat(3, 56px);
+        grid-template-rows: repeat(3, 56px);
+        gap: 6px;
+    }
+
+    .dpad-btn {
+        background: #1a1a22;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        color: #a1a1aa;
+        font-weight: bold;
+        font-size: 1.25rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+        .dpad-btn:hover {
+            background: #27272a;
+            color: #d4d4d8;
+            border-color: rgba(197, 48, 48, 0.4);
+        }
+
+        .dpad-btn:active {
+            background: #c53030;
+            color: white;
+            transform: scale(0.95);
+        }
+
+        .dpad-btn.north {
+            grid-area: north;
+        }
+
+        .dpad-btn.south {
+            grid-area: south;
+        }
+
+        .dpad-btn.east {
+            grid-area: east;
+        }
+
+        .dpad-btn.west {
+            grid-area: west;
+        }
+
+        .dpad-btn.stop {
+            grid-area: stop;
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+            color: white;
+            border-color: transparent;
+        }
+
+            .dpad-btn.stop:hover {
+                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            }
+
+    /* Quick Access Panel */
+    .quick-targets {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1.25rem;
+    }
+
+    .quick-btn {
+        padding: 0.6rem 1rem;
+        background: #1a1a22;
+        border: 1px solid #27272a;
+        border-radius: 8px;
+        color: #a1a1aa;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-size: 0.85rem;
+    }
+
+        .quick-btn:hover:not(:disabled) {
+            background: rgba(197, 48, 48, 0.2);
+            border-color: rgba(197, 48, 48, 0.4);
+            color: #d4d4d8;
+        }
+
+        .quick-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+    .quick-links {
+        display: flex;
+        gap: 0.75rem;
+    }
+
+    .link-btn {
+        padding: 0.6rem 1rem;
+        background: linear-gradient(135deg, #c53030 0%, #9b2c2c 100%);
+        border-radius: 8px;
+        color: white;
+        text-decoration: none;
+        transition: all 0.2s ease;
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
+
+        .link-btn:hover {
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+            transform: translateY(-1px);
+        }
+
+    .slew-rate-control {
+        flex: 1;
+        min-width: 150px;
+    }
+
+        .slew-rate-control label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #71717a;
+            font-size: 0.9rem;
+        }
+
+        .slew-rate-control input[type="range"] {
+            width: 100%;
+            accent-color: #c53030;
+        }
+
+    .rate-labels {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.75rem;
+        color: #52525b;
+        margin-top: 0.25rem;
+    }
+
+    .slew-hint {
+        margin-top: 1rem;
+        color: #52525b;
+        font-size: 0.8rem;
+        text-align: center;
+    }
+
+    .goto-form {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .input-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+
+        .input-group label {
+            color: #71717a;
+            font-size: 0.85rem;
+        }
+
+        .input-group input {
+            background: #0a0a0c;
+            border: 1px solid #27272a;
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            color: #d4d4d8;
+            font-size: 1rem;
+            transition: border-color 0.2s ease;
+        }
+
+            .input-group input:focus {
+                outline: none;
+                border-color: #c53030;
+                box-shadow: 0 0 0 3px rgba(197, 48, 48, 0.15);
+            }
+
+    .tracking-buttons {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    .settings-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+    }
+
+    .setting-item {
+        background: #0a0a0c;
+        padding: 1rem;
+        border-radius: 12px;
+        border: 1px solid #1f1f23;
+    }
+
+        .setting-item h4 {
+            margin: 0 0 0.5rem 0;
+            color: #71717a;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .setting-item p {
+            margin: 0.25rem 0;
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            font-size: 0.9rem;
+            color: #a1a1aa;
+        }
+
+    @@media (max-width: 768px) {
+        .app-header {
+            flex-direction: column;
+            gap: 1rem;
+            text-align: center;
+        }
+
+        .position-grid,
+        .settings-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .slew-controls {
+            flex-direction: column;
+        }
+    }
+</style>

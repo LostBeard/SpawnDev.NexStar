@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="SpawnDev.NexStar.App/SpawnDev.NexStar.App.csproj" />
+  <Project Path="SpawnDev.NexStar/SpawnDev.NexStar.csproj" />
+</Solution>

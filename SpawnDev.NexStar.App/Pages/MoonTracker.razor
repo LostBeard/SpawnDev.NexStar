@@ -1,0 +1,730 @@
+@page "/moon"
+@using SpawnDev.NexStar.App.Services
+@inject NexStarService NexStar
+@inject LocationService LocationService
+@implements IDisposable
+
+<PageTitle>Moon Tracker</PageTitle>
+
+<div class="moon-tracker-app">
+    <header class="app-header">
+        <h1>🌙 Moon Tracker</h1>
+        <span class="subtitle">Lunar Observation Tool</span>
+    </header>
+
+    <main class="app-main">
+        <!-- Current Moon Status -->
+        <section class="panel status-panel">
+            <div class="moon-phase-display">
+                <span class="phase-emoji">@LunarMath.GetMoonPhaseEmoji(_currentTime)</span>
+                <div class="phase-info">
+                    <span class="phase-name">@LunarMath.GetMoonPhaseName(_currentTime)</span>
+                    <span class="illumination">@Math.Round(LunarMath.GetMoonIllumination(_currentTime), 1)% illuminated</span>
+                </div>
+            </div>
+
+            @if (_hasLocation)
+            {
+                <div class="moon-position">
+                    <div class="position-row">
+                        <div class="position-item">
+                            <label>Altitude</label>
+                            <span class="@(_moonAzAlt.Altitude > 0 ? "status-good" : "status-dim")">
+                                @Math.Round(_moonAzAlt.Altitude, 1)°
+                            </span>
+                        </div>
+                        <div class="position-item">
+                            <label>Azimuth</label>
+                            <span>@Math.Round(_moonAzAlt.Azimuth, 1)°</span>
+                        </div>
+                    </div>
+                    <div class="visibility-status @(_moonAzAlt.Altitude > 0 ? "visible" : "not-visible")">
+                        @if (_moonAzAlt.Altitude > 0)
+                        {
+                            <span>🌙 Moon is above the horizon</span>
+                        }
+                        else
+                        {
+                            <span>🌑 Moon is below the horizon</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="rise-set-times">
+                    <div class="time-item">
+                        <label>Rise</label>
+                        <span>@FormatTime(_moonRise)</span>
+                    </div>
+                    <div class="time-item">
+                        <label>Transit</label>
+                        <span>@FormatTime(_moonTransit)</span>
+                    </div>
+                    <div class="time-item">
+                        <label>Set</label>
+                        <span>@FormatTime(_moonSet)</span>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="no-location">
+                    <p>📍 Location not available</p>
+                    <p class="hint">Connect telescope or <span style="cursor: pointer; text-decoration: underline; font-weight: bold;" @onclick="(() => LocationService.RequestBrowserLocationAsync())">enable GPS</span> to show location based information</p>
+                </div>
+            }
+
+            @if (NexStar.ComsEnabled && _hasLocation && _moonAzAlt.Altitude > 0)
+            {
+                <button class="btn btn-primary" @onclick="GotoMoon" disabled="@_isLoading">
+                    🎯 Go to Moon
+                </button>
+            }
+        </section>
+
+        <!-- 30-Day Forecast -->
+        <section class="panel forecast-panel">
+            <h2>30-Day Visibility Forecast</h2>
+            <div class="forecast-grid">
+                @foreach (var day in _forecast)
+                {
+                    <div class="forecast-day @GetVisibilityClass(day)">
+                        <span class="day-date">@day.Date.ToString("M/d")</span>
+                        <span class="day-phase">@day.PhaseEmoji</span>
+                        <span class="day-illum">@Math.Round(day.Illumination)%</span>
+                        @if (day.MaxAltitude.HasValue)
+                        {
+                            <span class="day-alt">@Math.Round(day.MaxAltitude.Value)°</span>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="forecast-legend">
+                <span class="legend-item good">● Good</span>
+                <span class="legend-item fair">● Fair</span>
+                <span class="legend-item poor">● Poor</span>
+            </div>
+        </section>
+
+        <!-- Lunar Features -->
+        <section class="panel features-panel">
+            <h2>Lunar Features</h2>
+            <div class="feature-filters">
+                <button class="filter-btn @(_featureFilter == "" ? "active" : "")" @onclick="@(() => SetFeatureFilter(string.Empty))">All</button>
+                <button class="filter-btn @(_featureFilter == "Crater" ? "active" : "")" @onclick='() => SetFeatureFilter("Crater")'>Craters</button>
+                <button class="filter-btn @(_featureFilter == "Mare" ? "active" : "")" @onclick='() => SetFeatureFilter("Mare")'>Maria</button>
+                <button class="filter-btn @(_featureFilter == "Mountain" ? "active" : "")" @onclick='() => SetFeatureFilter("Mountain")'>Mountains</button>
+            </div>
+            <div class="feature-list">
+                @foreach (var feature in GetFilteredFeatures().Take(20))
+                {
+                    var isVisible = LunarMath.IsFeatureVisible(feature.Longitude, feature.Latitude, _currentTime);
+                    <div class="feature-item @(isVisible ? "visible" : "hidden")">
+                        <div class="feature-main">
+                            <span class="feature-name">@feature.Name</span>
+                            <span class="feature-type">@feature.Type</span>
+                        </div>
+                        <div class="feature-details">
+                            <span class="feature-coords">@feature.Latitude.ToString("+0.0;-0.0")°, @feature.Longitude.ToString("+0.0;-0.0")°</span>
+                            @if (feature.Diameter > 0)
+                            {
+                                <span class="feature-size">@feature.Diameter km</span>
+                            }
+                        </div>
+                        <div class="feature-visibility">
+                            @if (isVisible)
+                            {
+                                <span class="vis-badge good">Visible</span>
+                            }
+                            else
+                            {
+                                <span class="vis-badge dim">In Shadow</span>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+            @if (GetFilteredFeatures().Count() > 20)
+            {
+                <p class="hint">Showing top 20 of @GetFilteredFeatures().Count() features</p>
+            }
+        </section>
+
+        @if (!string.IsNullOrEmpty(_statusMessage))
+        {
+            <div class="status-message @_statusClass">@_statusMessage</div>
+        }
+    </main>
+</div>
+
+@code {
+    private DateTime _currentTime = DateTime.UtcNow;
+    private bool _hasLocation = false;
+    private double _latitude = 0;
+    private double _longitude = 0;
+    private AzAltCoordinates _moonAzAlt = new();
+    private DateTime? _moonRise;
+    private DateTime? _moonSet;
+    private DateTime? _moonTransit;
+    private List<DayForecast> _forecast = new();
+    private string _featureFilter = "";
+    private bool _isLoading = false;
+    private string _statusMessage = "";
+    private string _statusClass = "";
+    private System.Timers.Timer? _updateTimer;
+
+    protected override void OnInitialized()
+    {
+        // Update location and time and then the data based on that
+        UpdateLocation();
+
+        LocationService.OnLocationChanged += LocationService_OnLocationChanged;
+
+        // Update every minute
+        _updateTimer = new System.Timers.Timer(60000);
+        _updateTimer.Elapsed += (s, e) =>
+        {
+            _currentTime = DateTime.UtcNow;
+            UpdateMoonData();
+            InvokeAsync(StateHasChanged);
+        };
+        _updateTimer.Start();
+    }
+
+    private void LocationService_OnLocationChanged()
+    {
+        UpdateLocation();
+    }
+
+    private void UpdateLocation()
+    {
+        if (LocationService.Location != null)
+        {
+            _latitude = LocationService.Location.Latitude;
+            _longitude = LocationService.Location.Longitude;
+            _hasLocation = true;
+        }
+        else if (NexStar.Location != null)
+        {
+            _latitude = NexStar.Location.Latitude;
+            _longitude = NexStar.Location.Longitude;
+            _hasLocation = true;
+        }
+        UpdateMoonData();
+        GenerateForecast();
+    }
+
+    private void UpdateMoonData()
+    {
+        _currentTime = DateTime.UtcNow;
+
+        if (_hasLocation)
+        {
+            _moonAzAlt = LunarMath.GetMoonAzAlt(_latitude, _longitude, _currentTime);
+            var riseSet = LunarMath.GetMoonRiseSetTransit(_latitude, _longitude, _currentTime);
+            _moonRise = riseSet.Rise;
+            _moonSet = riseSet.Set;
+            _moonTransit = riseSet.Transit;
+        }
+    }
+
+    private void GenerateForecast()
+    {
+        _forecast.Clear();
+        var today = DateTime.UtcNow.Date;
+
+        for (int i = 0; i < 30; i++)
+        {
+            var date = today.AddDays(i);
+            var noon = date.AddHours(12);
+
+            var day = new DayForecast
+            {
+                Date = date,
+                PhaseEmoji = LunarMath.GetMoonPhaseEmoji(noon),
+                PhaseName = LunarMath.GetMoonPhaseName(noon),
+                Illumination = LunarMath.GetMoonIllumination(noon)
+            };
+
+            if (_hasLocation)
+            {
+                var riseSet = LunarMath.GetMoonRiseSetTransit(_latitude, _longitude, date);
+                day.Rise = riseSet.Rise;
+                day.Set = riseSet.Set;
+
+                if (riseSet.Transit.HasValue)
+                {
+                    var transitPos = LunarMath.GetMoonAzAlt(_latitude, _longitude, riseSet.Transit.Value);
+                    day.MaxAltitude = transitPos.Altitude;
+                }
+            }
+
+            _forecast.Add(day);
+        }
+    }
+
+    private async Task GotoMoon()
+    {
+        if (!NexStar.ComsEnabled || !_hasLocation) return;
+
+        _isLoading = true;
+        _statusMessage = "Slewing to Moon...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        try
+        {
+            // Get current Moon position
+            var moonPos = LunarMath.GetMoonPosition(DateTime.UtcNow);
+
+            // Convert RA from degrees to the format NexStar expects
+            await NexStar.GotoRaDecAsync(moonPos.RightAscension, moonPos.Declination);
+
+            _statusMessage = "✓ Slewing to Moon";
+            _statusClass = "success";
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Error: {ex.Message}";
+            _statusClass = "error";
+        }
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private void SetFeatureFilter(string filter)
+    {
+        _featureFilter = filter;
+    }
+
+    private IEnumerable<MoonFeature> GetFilteredFeatures()
+    {
+        var features = LunarFeatureCatalog.Features;
+
+        if (!string.IsNullOrEmpty(_featureFilter))
+        {
+            if (_featureFilter == "Mountain")
+            {
+                features = features.Where(f =>
+                    f.Type == "Mons" || f.Type == "Montes" || f.Type == "Mountain").ToList();
+            }
+            else
+            {
+                features = features.Where(f => f.Type == _featureFilter).ToList();
+            }
+        }
+
+        // Sort: visible features first, then by name
+        return features.OrderByDescending(f => LunarMath.IsFeatureVisible(f.Longitude, f.Latitude, _currentTime))
+                       .ThenBy(f => f.Name);
+    }
+
+    private string FormatTime(DateTime? time)
+    {
+        if (!time.HasValue) return "--:--";
+        return time.Value.ToLocalTime().ToString("HH:mm");
+    }
+
+    private string GetVisibilityClass(DayForecast day)
+    {
+        if (!day.MaxAltitude.HasValue) return "poor";
+        if (day.MaxAltitude.Value > 45 && day.Illumination > 20) return "good";
+        if (day.MaxAltitude.Value > 20 && day.Illumination > 10) return "fair";
+        return "poor";
+    }
+
+    public void Dispose()
+    {
+        LocationService.OnLocationChanged -= LocationService_OnLocationChanged;
+        _updateTimer?.Stop();
+        _updateTimer?.Dispose();
+    }
+
+    private class DayForecast
+    {
+        public DateTime Date { get; set; }
+        public string PhaseEmoji { get; set; } = "";
+        public string PhaseName { get; set; } = "";
+        public double Illumination { get; set; }
+        public DateTime? Rise { get; set; }
+        public DateTime? Set { get; set; }
+        public double? MaxAltitude { get; set; }
+    }
+}
+
+<style>
+    .moon-tracker-app {
+        font-family: 'Inter', 'Segoe UI', -apple-system, sans-serif;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 1rem;
+        color: #d4d4d8;
+    }
+
+    .app-header {
+        text-align: center;
+        padding: 1.5rem;
+        background: linear-gradient(135deg, #0d0d10 0%, #131318 100%);
+        border: 1px solid rgba(234, 179, 8, 0.2);
+        border-radius: 16px;
+        margin-bottom: 1.5rem;
+    }
+
+        .app-header h1 {
+            margin: 0;
+            font-size: 1.75rem;
+            background: linear-gradient(135deg, #fff 0%, #fbbf24 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+    .subtitle {
+        color: #71717a;
+        font-size: 0.9rem;
+    }
+
+    .app-main {
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+    }
+
+    .panel {
+        background: linear-gradient(180deg, #131318 0%, #0f0f12 100%);
+        border: 1px solid #27272a;
+        border-radius: 16px;
+        padding: 1.5rem;
+    }
+
+        .panel h2 {
+            margin: 0 0 1rem 0;
+            font-size: 1.1rem;
+            color: #a1a1aa;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+    /* Moon Phase Display */
+    .moon-phase-display {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .phase-emoji {
+        font-size: 4rem;
+        line-height: 1;
+    }
+
+    .phase-info {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .phase-name {
+        font-size: 1.3rem;
+        font-weight: 600;
+        color: #fbbf24;
+    }
+
+    .illumination {
+        color: #a1a1aa;
+    }
+
+    /* Position */
+    .moon-position {
+        margin-bottom: 1rem;
+    }
+
+    .position-row {
+        display: flex;
+        gap: 2rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .position-item {
+        text-align: center;
+    }
+
+        .position-item label {
+            display: block;
+            font-size: 0.7rem;
+            color: #71717a;
+            text-transform: uppercase;
+        }
+
+        .position-item span {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.2rem;
+        }
+
+    .visibility-status {
+        text-align: center;
+        padding: 0.5rem;
+        border-radius: 8px;
+        font-size: 0.9rem;
+    }
+
+        .visibility-status.visible {
+            background: rgba(74, 222, 128, 0.1);
+            color: #4ade80;
+        }
+
+        .visibility-status.not-visible {
+            background: rgba(161, 161, 170, 0.1);
+            color: #71717a;
+        }
+
+    /* Rise/Set Times */
+    .rise-set-times {
+        display: flex;
+        justify-content: space-around;
+        margin: 1rem 0;
+        padding: 0.75rem;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 10px;
+    }
+
+    .time-item {
+        text-align: center;
+    }
+
+        .time-item label {
+            display: block;
+            font-size: 0.7rem;
+            color: #71717a;
+            text-transform: uppercase;
+        }
+
+        .time-item span {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+    /* Forecast Grid */
+    .forecast-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 4px;
+        margin-bottom: 0.75rem;
+    }
+
+    .forecast-day {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 0.4rem;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.2);
+        font-size: 0.65rem;
+    }
+
+        .forecast-day.good {
+            background: rgba(74, 222, 128, 0.15);
+            border: 1px solid rgba(74, 222, 128, 0.3);
+        }
+
+        .forecast-day.fair {
+            background: rgba(251, 191, 36, 0.15);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+        }
+
+        .forecast-day.poor {
+            background: rgba(161, 161, 170, 0.1);
+            border: 1px solid rgba(161, 161, 170, 0.2);
+        }
+
+    .day-date {
+        color: #71717a;
+    }
+
+    .day-phase {
+        font-size: 1.2rem;
+    }
+
+    .day-illum, .day-alt {
+        color: #a1a1aa;
+    }
+
+    .forecast-legend {
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+        font-size: 0.75rem;
+        color: #71717a;
+    }
+
+    .legend-item.good {
+        color: #4ade80;
+    }
+
+    .legend-item.fair {
+        color: #fbbf24;
+    }
+
+    .legend-item.poor {
+        color: #71717a;
+    }
+
+    /* Features */
+    .feature-filters {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .filter-btn {
+        padding: 0.4rem 0.8rem;
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        background: transparent;
+        color: #a1a1aa;
+        cursor: pointer;
+        font-size: 0.85rem;
+        transition: all 0.2s;
+    }
+
+        .filter-btn:hover {
+            border-color: #fbbf24;
+            color: #fbbf24;
+        }
+
+        .filter-btn.active {
+            background: rgba(251, 191, 36, 0.2);
+            border-color: #fbbf24;
+            color: #fbbf24;
+        }
+
+    .feature-list {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+
+    .feature-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem;
+        border-bottom: 1px solid #27272a;
+        gap: 0.5rem;
+    }
+
+        .feature-item.hidden {
+            opacity: 0.5;
+        }
+
+    .feature-main {
+        flex: 1;
+    }
+
+    .feature-name {
+        font-weight: 500;
+        color: #d4d4d8;
+    }
+
+    .feature-type {
+        font-size: 0.75rem;
+        color: #71717a;
+        margin-left: 0.5rem;
+    }
+
+    .feature-details {
+        font-size: 0.75rem;
+        color: #71717a;
+        text-align: right;
+    }
+
+    .feature-coords, .feature-size {
+        display: block;
+    }
+
+    .vis-badge {
+        font-size: 0.7rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+    }
+
+        .vis-badge.good {
+            background: rgba(74, 222, 128, 0.2);
+            color: #4ade80;
+        }
+
+        .vis-badge.dim {
+            background: rgba(161, 161, 170, 0.2);
+            color: #71717a;
+        }
+
+    /* Status */
+    .status-good {
+        color: #4ade80;
+    }
+
+    .status-dim {
+        color: #71717a;
+    }
+
+    .no-location {
+        text-align: center;
+        padding: 1rem;
+        color: #71717a;
+    }
+
+        .no-location p {
+            margin: 0.25rem 0;
+        }
+
+    .hint {
+        font-size: 0.85rem;
+        color: #71717a;
+    }
+
+    .status-message {
+        padding: 0.75rem;
+        border-radius: 10px;
+        text-align: center;
+    }
+
+        .status-message.info {
+            background: rgba(37, 99, 235, 0.15);
+            color: #60a5fa;
+        }
+
+        .status-message.success {
+            background: rgba(74, 222, 128, 0.15);
+            color: #4ade80;
+        }
+
+        .status-message.error {
+            background: rgba(220, 38, 38, 0.15);
+            color: #f87171;
+        }
+
+    /* Buttons */
+    .btn {
+        width: 100%;
+        padding: 0.75rem 1.5rem;
+        border: none;
+        border-radius: 12px;
+        font-size: 1rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        margin-top: 1rem;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #fbbf24 0%, #d97706 100%);
+        color: #0a0a0c;
+    }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #fcd34d 0%, #f59e0b 100%);
+        }
+
+    .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+</style>

@@ -1,0 +1,424 @@
+@page "/planets"
+@using SpawnDev.NexStar.App.Services
+@inject NexStarService NexStar
+@inject LocationService LocationService
+@implements IDisposable
+
+<PageTitle>Planets</PageTitle>
+
+<div class="solar-tracker-app">
+    <header class="app-header">
+        <h1>🪐 Solar System Tracker</h1>
+        <span class="subtitle">When planets are visible from your location</span>
+    </header>
+
+    <main class="app-main">
+        @if (_hasLocation)
+        {
+            <section class="panel status-panel">
+                <p class="hint">Times are in your local time. Rise/transit/set are approximate.</p>
+            </section>
+
+            @foreach (var obj in SolarSystemMath.Planets)
+            {
+                var info = _planetData.GetValueOrDefault(obj);
+                var azAlt = info?.AzAlt ?? new AzAltCoordinates();
+                var riseSet = info?.RiseSet ?? (null, null, null);
+                var isVisible = azAlt.Altitude > 0;
+
+                <section class="panel planet-panel">
+                    <div class="planet-header">
+                        <span class="planet-symbol">@SolarSystemMath.GetSymbol(obj)</span>
+                        <div class="planet-title">
+                            <span class="planet-name">@SolarSystemMath.GetName(obj)</span>
+                            <span class="visibility-badge @(isVisible ? "visible" : "not-visible")">
+                                @(isVisible ? "Above horizon" : "Below horizon")
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="planet-position">
+                        <div class="position-row">
+                            <div class="position-item">
+                                <label>Altitude</label>
+                                <span class="@(azAlt.Altitude > 0 ? "status-good" : "status-dim")">
+                                    @Math.Round(azAlt.Altitude, 1)°
+                                </span>
+                            </div>
+                            <div class="position-item">
+                                <label>Azimuth</label>
+                                <span>@Math.Round(azAlt.Azimuth, 1)°</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="rise-set-times">
+                        <div class="time-item">
+                            <label>Rise</label>
+                            <span>@FormatTime(riseSet.Rise)</span>
+                        </div>
+                        <div class="time-item">
+                            <label>Transit</label>
+                            <span>@FormatTime(riseSet.Transit)</span>
+                        </div>
+                        <div class="time-item">
+                            <label>Set</label>
+                            <span>@FormatTime(riseSet.Set)</span>
+                        </div>
+                    </div>
+
+                    @if (NexStar.ComsEnabled && isVisible)
+                    {
+                        <button class="btn btn-primary btn-sm" @onclick="() => GotoPlanet(obj)" disabled="@_isLoading">
+                            🎯 Go to @SolarSystemMath.GetName(obj)
+                        </button>
+                    }
+                </section>
+            }
+        }
+        else
+        {
+            <section class="panel status-panel">
+                <div class="no-location">
+                    <p>📍 Location not available</p>
+                    <p class="hint">Connect telescope or <span style="cursor: pointer; text-decoration: underline; font-weight: bold;" @onclick="(() => LocationService.RequestBrowserLocationAsync())">enable GPS</span> to see when planets are visible from your location.</p>
+                </div>
+            </section>
+        }
+
+        @if (!string.IsNullOrEmpty(_statusMessage))
+        {
+            <div class="status-message @_statusClass">@_statusMessage</div>
+        }
+    </main>
+</div>
+
+@code {
+    private DateTime _currentTime = DateTime.UtcNow;
+    private bool _hasLocation = false;
+    private double _latitude = 0;
+    private double _longitude = 0;
+    private Dictionary<SolarSystemObject, PlanetInfo> _planetData = new();
+    private bool _isLoading = false;
+    private string _statusMessage = "";
+    private string _statusClass = "";
+    private System.Timers.Timer? _updateTimer;
+
+    protected override void OnInitialized()
+    {
+        UpdateLocation();
+        LocationService.OnLocationChanged += LocationService_OnLocationChanged;
+
+        _updateTimer = new System.Timers.Timer(60000);
+        _updateTimer.Elapsed += (s, e) =>
+        {
+            _currentTime = DateTime.UtcNow;
+            UpdatePlanetData();
+            InvokeAsync(StateHasChanged);
+        };
+        _updateTimer.Start();
+    }
+
+    private void LocationService_OnLocationChanged()
+    {
+        UpdateLocation();
+    }
+
+    private void UpdateLocation()
+    {
+        if (LocationService.Location != null)
+        {
+            _latitude = LocationService.Location.Latitude;
+            _longitude = LocationService.Location.Longitude;
+            _hasLocation = true;
+        }
+        else if (NexStar.Location != null)
+        {
+            _latitude = NexStar.Location.Latitude;
+            _longitude = NexStar.Location.Longitude;
+            _hasLocation = true;
+        }
+        UpdatePlanetData();
+    }
+
+    private void UpdatePlanetData()
+    {
+        _currentTime = DateTime.UtcNow;
+        _planetData.Clear();
+
+        if (!_hasLocation) return;
+
+        var today = DateTime.UtcNow.Date;
+
+        foreach (var obj in SolarSystemMath.Planets)
+        {
+            var azAlt = SolarSystemMath.GetAzAlt(obj, _latitude, _longitude, _currentTime);
+            var riseSet = SolarSystemMath.GetRiseSetTransit(obj, _latitude, _longitude, today);
+
+            _planetData[obj] = new PlanetInfo
+            {
+                AzAlt = azAlt,
+                RiseSet = riseSet
+            };
+        }
+    }
+
+    private async Task GotoPlanet(SolarSystemObject obj)
+    {
+        if (!NexStar.ComsEnabled || !_hasLocation) return;
+
+        _isLoading = true;
+        _statusMessage = $"Slewing to {SolarSystemMath.GetName(obj)}...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        try
+        {
+            var pos = SolarSystemMath.GetPosition(obj, DateTime.UtcNow);
+            await NexStar.GotoRaDecAsync(pos.RightAscension, pos.Declination);
+            _statusMessage = $"✓ Slewing to {SolarSystemMath.GetName(obj)}";
+            _statusClass = "success";
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"Error: {ex.Message}";
+            _statusClass = "error";
+        }
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    private static string FormatTime(DateTime? time)
+    {
+        if (!time.HasValue) return "--:--";
+        return time.Value.ToLocalTime().ToString("HH:mm");
+    }
+
+    public void Dispose()
+    {
+        LocationService.OnLocationChanged -= LocationService_OnLocationChanged;
+        _updateTimer?.Stop();
+        _updateTimer?.Dispose();
+    }
+
+    private class PlanetInfo
+    {
+        public AzAltCoordinates AzAlt { get; set; } = new();
+        public (DateTime? Rise, DateTime? Set, DateTime? Transit) RiseSet { get; set; }
+    }
+}
+
+<style>
+    .solar-tracker-app {
+        font-family: 'Inter', 'Segoe UI', -apple-system, sans-serif;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 1rem;
+        color: #d4d4d8;
+    }
+
+    .app-header {
+        text-align: center;
+        padding: 1.5rem;
+        background: linear-gradient(135deg, #0d0d10 0%, #131318 100%);
+        border: 1px solid rgba(139, 92, 246, 0.2);
+        border-radius: 16px;
+        margin-bottom: 1.5rem;
+    }
+
+        .app-header h1 {
+            margin: 0;
+            font-size: 1.75rem;
+            background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+    .subtitle {
+        color: #71717a;
+        font-size: 0.9rem;
+    }
+
+    .app-main {
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+    }
+
+    .panel {
+        background: linear-gradient(180deg, #131318 0%, #0f0f12 100%);
+        border: 1px solid #27272a;
+        border-radius: 16px;
+        padding: 1.5rem;
+    }
+
+    .planet-panel {
+        border-left: 4px solid rgba(139, 92, 246, 0.5);
+    }
+
+    .planet-header {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .planet-symbol {
+        font-size: 2.5rem;
+        line-height: 1;
+    }
+
+    .planet-title {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .planet-name {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #a78bfa;
+    }
+
+    .visibility-badge {
+        font-size: 0.75rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 6px;
+        width: fit-content;
+    }
+
+        .visibility-badge.visible {
+            background: rgba(74, 222, 128, 0.15);
+            color: #4ade80;
+        }
+
+        .visibility-badge.not-visible {
+            background: rgba(161, 161, 170, 0.15);
+            color: #71717a;
+        }
+
+    .planet-position {
+        margin-bottom: 0.75rem;
+    }
+
+    .position-row {
+        display: flex;
+        gap: 2rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .position-item {
+        text-align: center;
+    }
+
+        .position-item label {
+            display: block;
+            font-size: 0.7rem;
+            color: #71717a;
+            text-transform: uppercase;
+        }
+
+        .position-item span {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.1rem;
+        }
+
+    .status-good {
+        color: #4ade80;
+    }
+
+    .status-dim {
+        color: #71717a;
+    }
+
+    .rise-set-times {
+        display: flex;
+        justify-content: space-around;
+        margin: 1rem 0;
+        padding: 0.75rem;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 10px;
+    }
+
+    .time-item {
+        text-align: center;
+    }
+
+        .time-item label {
+            display: block;
+            font-size: 0.7rem;
+            color: #71717a;
+            text-transform: uppercase;
+        }
+
+        .time-item span {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+    .no-location {
+        text-align: center;
+        padding: 1rem;
+        color: #71717a;
+    }
+
+        .no-location p {
+            margin: 0.25rem 0;
+        }
+
+    .hint {
+        font-size: 0.85rem;
+        color: #71717a;
+    }
+
+    .status-message {
+        padding: 0.75rem;
+        border-radius: 10px;
+        text-align: center;
+    }
+
+        .status-message.info {
+            background: rgba(37, 99, 235, 0.15);
+            color: #60a5fa;
+        }
+
+        .status-message.success {
+            background: rgba(74, 222, 128, 0.15);
+            color: #4ade80;
+        }
+
+        .status-message.error {
+            background: rgba(220, 38, 38, 0.15);
+            color: #f87171;
+        }
+
+    .btn {
+        padding: 0.6rem 1rem;
+        border: none;
+        border-radius: 12px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        margin-top: 0.75rem;
+    }
+
+    .btn-sm {
+        width: 100%;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%);
+        color: #fff;
+    }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #c4b5fd 0%, #8b5cf6 100%);
+        }
+
+    .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+</style>

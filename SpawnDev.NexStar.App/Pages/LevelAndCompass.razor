@@ -1,0 +1,614 @@
+@page "/level"
+@inject PhoneSensorService SensorService
+@inject NexStarService NexStar
+@inject LocationService LocationService
+@inject SpawnJSRuntime JS
+@implements IDisposable
+@using SpawnDev.SpawnJS.JSObjects
+@using SpawnDev.NexStar.App.Services
+
+<PageTitle>Level & Compass</PageTitle>
+
+<div class="level-compass-app">
+    <header class="app-header">
+        <h1>🧭 Level & Compass</h1>
+        <span class="subtitle">Rough Alignment Tool</span>
+    </header>
+
+    <main class="app-main">
+        <!-- Sensor Status -->
+        @if (!SensorService.IsActive)
+        {
+            <section class="panel sensor-panel">
+                <div class="alert alert-warning">
+                    <p>📱 Sensors must be enabled to use this tool.</p>
+                    <p class="hint">For best results, hold your phone flat against the telescope tube.</p>
+                </div>
+                <button class="btn btn-primary" @onclick="EnableSensors">
+                    🔓 Enable Sensors
+                </button>
+            </section>
+        }
+        else
+        {
+            <!-- Combined Compass & Level -->
+            <section class="panel compass-level-panel">
+                <h2>Compass & Level</h2>
+                <div class="combined-display">
+                    <!-- Compass Ring (rotates) -->
+                    <div class="compass-ring" style="transform: rotate(@(-CompassBearing)deg)">
+                        <div class="compass-n">N</div>
+                        <div class="compass-e">E</div>
+                        <div class="compass-s">S</div>
+                        <div class="compass-w">W</div>
+                        <div class="compass-tick north"></div>
+                    </div>
+                    <!-- Level Bubble (moves within center) -->
+                    <div class="level-center">
+                        <div class="level-bubble" style="transform: translate(calc(-50% + @(-_roll * 2)px), calc(-50% + @(-_pitch * 2)px))"></div>
+                        <div class="level-crosshair"></div>
+                        <div class="level-ring-inner"></div>
+                    </div>
+                    <!-- Fixed North Indicator -->
+                    <div class="north-indicator">▲</div>
+                </div>
+                <!-- Readouts -->
+                <div class="readouts">
+                    <div class="readout">
+                        <label>Heading</label>
+                        <span class="@(IsAlignedToNorth() ? "status-good" : "")">@Math.Round(CompassBearing, 1)°</span>
+                    </div>
+                    <div class="readout">
+                        <label>Pitch</label>
+                        <span class="@(Math.Abs(_pitch) < 2 ? "status-good" : "")">@Math.Round(_pitch, 1)°</span>
+                    </div>
+                    <div class="readout">
+                        <label>Roll</label>
+                        <span class="@(Math.Abs(_roll) < 2 ? "status-good" : "")">@Math.Round(_roll, 1)°</span>
+                    </div>
+                </div>
+                <!-- Status -->
+                <div class="status-row">
+                    <div class="status-indicator @GetNorthAlignedClass()">
+                        @if (IsAlignedToNorth())
+                        {
+                            <span>✓ North</span>
+                        }
+                        else
+                        {
+                            var diff = GetNorthOffset();
+                            <span>@(diff > 0 ? "←" : "→") @Math.Abs(Math.Round(diff, 0))°</span>
+                        }
+                    </div>
+                    <div class="status-indicator @GetLevelClass()">
+                        @if (IsLevel())
+                        {
+                            <span>✓ Level</span>
+                        }
+                        else
+                        {
+                            <span>⚠ Tilt</span>
+                        }
+                    </div>
+                </div>
+            </section>
+
+            <!-- Location Info -->
+            <section class="panel location-panel">
+                <div class="panel-header">
+                    <h2>📍 Location</h2>
+                    <button class="btn btn-sm btn-secondary" @onclick="GetLocation" disabled="@_isLocating">
+                        @(_isLocating ? "Locating..." : "↻ Refresh")
+                    </button>
+                </div>
+                <div class="location-grid">
+                    <div class="readout">
+                        <label>Latitude</label>
+                        <span class="value">@(_browserLat?.ToString("F4") ?? "--")°</span>
+                    </div>
+                    <div class="readout">
+                        <label>Longitude</label>
+                        <span class="value">@(_browserLon?.ToString("F4") ?? "--")°</span>
+                    </div>
+                </div>
+                <p class="hint">Use these coordinates if your telescope asks for location during setup.</p>
+            </section>
+
+            <!-- Instructions -->
+            <section class="panel instructions-panel">
+                <h2>Instructions</h2>
+                <ol class="instruction-list">
+                    <li>Attach your phone to the telescope tube.</li>
+                    <li>Use the <strong>Compass</strong> to point the tube <strong>North</strong> (Az = 0°).</li>
+                    <li>Use the <strong>Level</strong> to make the tube <strong>horizontal</strong> (Alt = 0°).</li>
+                    <li>Power cycle your telescope to reset the internal position to Az = 0°, Alt = 0°.</li>
+                    <li>Your scope now has a rough alignment starting point!</li>
+                </ol>
+            </section>
+        }
+    </main>
+</div>
+
+@code {
+    private double _heading = 0;
+    private double _pitch = 0;
+    private double _roll = 0;
+    private bool _isLoading = false;
+    private bool _isLocating = false;
+    private string _statusMessage = "";
+    private string _statusClass = "";
+    private System.Timers.Timer? _updateTimer;
+    private double? _browserLat;
+    private double? _browserLon;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _updateTimer = new System.Timers.Timer(100); // 10 Hz update
+        _updateTimer.Elapsed += (s, e) => UpdateSensorValues();
+        _updateTimer.Start();
+        await GetLocation();
+    }
+
+    private async Task GetLocation()
+    {
+        if (_isLocating) return;
+        _isLocating = true;
+        StateHasChanged();
+
+        try
+        {
+            await LocationService.RequestBrowserLocationAsync();
+            var pos = LocationService.CachedBrowserLocation;
+            if (pos != null)
+            {
+                _browserLat = pos.Latitude;
+                _browserLon = pos.Longitude;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Location error: {ex.Message}");
+        }
+
+        _isLocating = false;
+        StateHasChanged();
+    }
+
+    private void UpdateSensorValues()
+    {
+        if (!SensorService.IsActive) return;
+
+        var orientation = SensorService.SmoothedOrientation;
+        _heading = orientation.X; // Alpha
+        _pitch = orientation.Y;   // Beta
+        _roll = orientation.Z;    // Gamma
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task EnableSensors()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        var result = await SensorService.RequestSensorPermission();
+        if (!result)
+        {
+            _statusMessage = "Sensor permission denied.";
+            _statusClass = "error";
+        }
+
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    // Convert raw sensor alpha (counter-clockwise) to compass bearing (clockwise)
+    private double CompassBearing => _heading == 0 ? 0 : (360 - _heading) % 360;
+
+    private bool IsAlignedToNorth() => Math.Abs(GetNorthOffset()) < 5;
+
+    private double GetNorthOffset()
+    {
+        // Use compass bearing for offset calculation
+        var bearing = CompassBearing;
+        if (bearing > 180) bearing -= 360;
+        return bearing;
+    }
+
+    private bool IsLevel() => Math.Abs(_pitch) < 2 && Math.Abs(_roll) < 2;
+
+    private string GetNorthAlignedClass() => IsAlignedToNorth() ? "status-good" : "status-warn";
+
+    private string GetLevelClass() => IsLevel() ? "status-good" : "status-warn";
+
+    private async Task ResetAzAlt()
+    {
+        if (!NexStar.ComsEnabled) return;
+
+        _isLoading = true;
+        _statusMessage = "Syncing to Az=0°, Alt=0°...";
+        _statusClass = "info";
+        StateHasChanged();
+
+        // Use SyncRaDec with the equivalent RA/Dec for current location and time
+        // OR use a pass-through command if available.
+        // For now, we'll use a simplified approach: GoTo Az=0, Alt=0 followed by canceling.
+        // A better approach would be to implement HBX (Hand Box Emulation) commands.
+        
+        // Actually, the simplest approach: tell the user the scope is NOW at 0,0.
+        // We need to implement a proper "sync" for Az/Alt.
+        // For now, let's just provide feedback.
+        
+        // NOTE: The NexStar protocol doesn't have a direct Az/Alt sync command.
+        // The 'S' command is for RA/Dec only.
+        // For Alt-Az mounts, the mount's "home" position is typically set by power cycling.
+        
+        _statusMessage = "⚠ Feature not fully supported by NexStar protocol. Power-cycle your scope after aligning.";
+        _statusClass = "warning";
+        _isLoading = false;
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        _updateTimer?.Stop();
+        _updateTimer?.Dispose();
+    }
+}
+
+<style>
+    .level-compass-app {
+        font-family: 'Inter', 'Segoe UI', -apple-system, sans-serif;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 1rem;
+        color: #d4d4d8;
+    }
+
+    .app-header {
+        text-align: center;
+        padding: 1.5rem;
+        background: linear-gradient(135deg, #0d0d10 0%, #131318 100%);
+        border: 1px solid rgba(197, 48, 48, 0.2);
+        border-radius: 16px;
+        margin-bottom: 1.5rem;
+    }
+
+    .app-header h1 {
+        margin: 0;
+        font-size: 1.75rem;
+        background: linear-gradient(135deg, #fff 0%, #c53030 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .subtitle {
+        color: #71717a;
+        font-size: 0.9rem;
+    }
+
+    .app-main {
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+    }
+
+    .panel {
+        background: linear-gradient(180deg, #131318 0%, #0f0f12 100%);
+        border: 1px solid #27272a;
+        border-radius: 16px;
+        padding: 1.5rem;
+    }
+
+    .panel h2 {
+        margin: 0 0 1rem 0;
+        font-size: 1.1rem;
+        color: #a1a1aa;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .alert {
+        padding: 1rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+    }
+
+    .alert-warning {
+        background: rgba(202, 138, 4, 0.15);
+        border: 1px solid rgba(202, 138, 4, 0.3);
+    }
+
+    .alert p {
+        margin: 0.25rem 0;
+    }
+
+    .hint {
+        font-size: 0.85rem;
+        color: #71717a;
+    }
+
+    /* Combined Compass & Level */
+    .combined-display {
+        position: relative;
+        width: 240px;
+        height: 240px;
+        margin: 0 auto 1rem;
+    }
+
+    .compass-ring {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border: 4px solid #3f3f46;
+        border-radius: 50%;
+        transition: transform 0.1s ease-out;
+        background: radial-gradient(circle, transparent 60%, #0a0a0c 100%);
+    }
+
+    .compass-n, .compass-e, .compass-s, .compass-w {
+        position: absolute;
+        font-weight: bold;
+        font-size: 1.2rem;
+        color: #a1a1aa;
+    }
+
+    .compass-n { top: 6%; left: 50%; transform: translateX(-50%); color: #c53030; font-size: 1.4rem; }
+    .compass-e { right: 6%; top: 50%; transform: translateY(-50%); }
+    .compass-s { bottom: 6%; left: 50%; transform: translateX(-50%); }
+    .compass-w { left: 6%; top: 50%; transform: translateY(-50%); }
+
+    .compass-tick.north {
+        position: absolute;
+        top: 18%;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 3px;
+        height: 12px;
+        background: #c53030;
+        border-radius: 2px;
+    }
+
+    .north-indicator {
+        position: absolute;
+        top: -30px;
+        left: 50%;
+        transform: translateX(-50%);
+        color: #c53030;
+        font-size: 1.5rem;
+    }
+
+    .level-center {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 120px;
+        height: 120px;
+        background: radial-gradient(circle, #1a1a1e 0%, #0f0f12 100%);
+        border: 2px solid #27272a;
+        border-radius: 50%;
+    }
+
+    .level-bubble {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 24px;
+        height: 24px;
+        background: radial-gradient(circle, #4ade80 0%, #16a34a 100%);
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        transition: transform 0.1s ease-out;
+        box-shadow: 0 0 12px rgba(74, 222, 128, 0.6);
+    }
+
+    .level-crosshair {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 16px;
+        height: 16px;
+        border: 2px solid #52525b;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+    }
+
+    .level-ring-inner {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 50px;
+        height: 50px;
+        border: 1px dashed #3f3f46;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+    }
+
+    /* Readouts */
+    .readouts {
+        display: flex;
+        justify-content: center;
+        gap: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .readout {
+        text-align: center;
+    }
+
+    .readout label {
+        display: block;
+        font-size: 0.7rem;
+        color: #71717a;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .readout span {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1rem;
+        color: #d4d4d8;
+    }
+
+    /* Status Row */
+    .status-row {
+        display: flex;
+        justify-content: center;
+        gap: 1rem;
+    }
+
+    /* Status Indicators */
+    .status-indicator {
+        text-align: center;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        font-weight: 500;
+        font-size: 0.9rem;
+    }
+
+    .status-good {
+        color: #4ade80;
+        background: rgba(74, 222, 128, 0.1);
+    }
+
+    .status-warn {
+        color: #fbbf24;
+        background: rgba(251, 191, 36, 0.1);
+    }
+
+    /* Actions */
+    .action-info {
+        margin-bottom: 1rem;
+    }
+
+    .action-info p {
+        margin: 0.25rem 0;
+    }
+
+    .muted {
+        color: #71717a;
+    }
+
+    .status-message {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        border-radius: 10px;
+        font-size: 0.9rem;
+    }
+
+    .status-message.info {
+        background: rgba(37, 99, 235, 0.15);
+        color: #60a5fa;
+    }
+
+    .status-message.warning {
+        background: rgba(202, 138, 4, 0.15);
+        color: #fbbf24;
+    }
+
+    .status-message.error {
+        background: rgba(220, 38, 38, 0.15);
+        color: #f87171;
+    }
+
+    /* Instructions */
+    .instruction-list {
+        margin: 0;
+        padding-left: 1.25rem;
+        color: #a1a1aa;
+    }
+
+    .instruction-list li {
+        margin-bottom: 0.5rem;
+    }
+
+    /* Buttons */
+    .btn {
+        padding: 0.75rem 1.5rem;
+        border: none;
+        border-radius: 12px;
+        font-size: 1rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        width: 100%;
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #c53030 0%, #9b2c2c 100%);
+        color: white;
+    }
+
+    .btn-primary:hover {
+        background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    }
+
+    .btn-warning {
+        background: linear-gradient(135deg, #ca8a04 0%, #a16207 100%);
+        color: white;
+    }
+
+    .btn-warning:hover {
+        background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%);
+    }
+
+    .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .btn-secondary {
+        background: #27272a;
+        color: #a1a1aa;
+        border: 1px solid #3f3f46;
+        width: auto;
+        padding: 0.5rem 1rem;
+        font-size: 0.9rem;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+        background: #3f3f46;
+        color: #d4d4d8;
+    }
+
+    /* Location Panel */
+    .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+
+    .panel-header h2 {
+        margin: 0;
+    }
+
+    .location-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        background: #0a0a0c;
+        padding: 1rem;
+        border-radius: 12px;
+        border: 1px solid #27272a;
+        margin-bottom: 0.75rem;
+    }
+
+    .location-grid .readout {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .location-grid .value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1.2rem;
+        color: #fbbf24;
+        font-weight: 600;
+        margin-top: 0.25rem;
+    }
+</style>

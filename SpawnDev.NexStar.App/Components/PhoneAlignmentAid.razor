@@ -1,0 +1,227 @@
+@using SpawnDev.NexStar
+@inject PhoneSensorService SensorService
+@inject NexStarService NexStar
+@implements IDisposable
+
+<div class="phone-alignment-aid">
+    <h3>Phone Alignment Aid</h3>
+
+    <div class="controls">
+        @if (!SensorService.IsActive)
+        {
+            <div class="alert alert-warning">
+                Sensors must be enabled. On iOS, please tap the button below.
+            </div>
+            <button class="btn btn-primary" @onclick="EnableSensors">Enable Sensors</button>
+        }
+        else
+        {
+            <span class="badge bg-success">Sensors Active</span>
+        }
+    </div>
+
+    <div class="data-grid">
+        <div class="data-item">
+            <label>Mount Position (Target)</label>
+            <div class="value">
+                @if (NexStar.CurrentAzAlt != null)
+                {
+                    <span>@NexStar.CurrentAzAlt.FormatAz() <br /> @NexStar.CurrentAzAlt.FormatAlt()</span>
+                }
+                else
+                {
+                    <span>--</span>
+                }
+            </div>
+        </div>
+        
+        <div class="data-item">
+            <label>Phone Calculated</label>
+            <div class="value">
+                @if (CalculatedPosition != null)
+                {
+                     <span>@CalculatedPosition.FormatAz() <br /> @CalculatedPosition.FormatAlt()</span>
+                }
+                else
+                {
+                    <span class="text-muted">Not Calibrated</span>
+                }
+            </div>
+        </div>
+    </div>
+    
+    <div class="calibration-section my-3">
+        <button class="btn btn-warning" @onclick="Calibrate" disabled="@(!SensorService.IsActive || NexStar.CurrentAzAlt == null)">
+            Calibrate to Mount Position
+        </button>
+        @if (SensorService.IsCalibrated)
+        {
+            <div class="small text-success mt-1">
+                Calibration Active. Offset applied.
+            </div>
+        }
+    </div>
+
+    <!-- Visual Bubble -->
+    @if (SensorService.IsCalibrated && NexStar.CurrentAzAlt != null && CalculatedPosition != null)
+    {
+        <div class="alignment-visual-container">
+            <div class="alignment-visual">
+                <!-- Crosshair (Target/Mount) -->
+                <div class="crosshair"></div>
+                
+                <!-- Bubble (Current/Phone) -->
+                <!-- 
+                   Delta calculation:
+                   Mount (Target) is Center (0,0).
+                   Phone (Current) is offset.
+                   If Phone Az > Mount Az, we are to the Right -> Bubble should be Right?
+                   "Push to align": If Bubble is Right, we must push Left?
+                   Usually Bubble indicates "Where I am".
+                   Target is Center.
+                   Visual: Fixed Crosshair. Moving Bubble.
+                -->
+                @{
+                    var (dx, dy) = GetVisualOffset(NexStar.CurrentAzAlt, CalculatedPosition);
+                }
+                <div class="bubble" style="transform: translate(@(dx)px, @(dy)px);"></div>
+            </div>
+            <div class="text-center small mt-2">
+                Push telescope to center the bubble
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    .phone-alignment-aid {
+        border: 1px solid #ccc;
+        padding: 1rem;
+        border-radius: 8px;
+        max-width: 400px;
+    }
+    .data-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+    .data-item label {
+        font-weight: bold;
+        font-size: 0.8rem;
+        display: block;
+    }
+    .alignment-visual-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        margin-top: 1rem;
+    }
+    .alignment-visual {
+        width: 200px;
+        height: 200px;
+        border: 2px solid #555;
+        border-radius: 50%;
+        position: relative;
+        background-color: #f0f0f0;
+        overflow: hidden;
+    }
+    .crosshair {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 20px;
+        height: 20px;
+        transform: translate(-50%, -50%);
+        opacity: 0.5;
+    }
+    .crosshair::before, .crosshair::after {
+        content: '';
+        position: absolute;
+        background: #000;
+    }
+    .crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
+    .crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
+    
+    .bubble {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 20px;
+        height: 20px;
+        background-color: rgba(255, 0, 0, 0.7);
+        border-radius: 50%;
+        margin-top: -10px; /* Center w/o transform base */
+        margin-left: -10px;
+        transition: transform 0.1s linear;
+    }
+</style>
+
+@code {
+    AzAltCoordinates? CalculatedPosition;
+
+    protected override void OnInitialized()
+    {
+        SensorService.OnSensorUpdated += OnSensorUpdated;
+        NexStar.OnStatusChanged += StateHasChanged;
+    }
+
+    public void Dispose()
+    {
+        SensorService.OnSensorUpdated -= OnSensorUpdated;
+        NexStar.OnStatusChanged -= StateHasChanged;
+    }
+
+    private async Task EnableSensors()
+    {
+        await SensorService.RequestSensorPermission();
+    }
+
+    private void Calibrate()
+    {
+        if (NexStar.CurrentAzAlt != null)
+        {
+            SensorService.Calibrate(NexStar.CurrentAzAlt);
+        }
+    }
+
+    private void OnSensorUpdated()
+    {
+        CalculatedPosition = SensorService.GetCalculatedPosition();
+        StateHasChanged();
+    }
+    
+    // Scale for visual bubble (degrees per pixel radius approx)
+    // 200px box -> +/- 100px.
+    // Let's say +/- 10 degrees range.
+    const double VisualRangeDegrees = 10.0;
+    const double PixelsPerDegree = 100.0 / VisualRangeDegrees;
+
+    private (double x, double y) GetVisualOffset(AzAltCoordinates target, AzAltCoordinates current)
+    {
+        // Delta Az
+        var dAz = current.Azimuth - target.Azimuth;
+        // Handle wrap around (e.g. 359 vs 1 -> -2 degrees)
+        if (dAz > 180) dAz -= 360;
+        if (dAz < -180) dAz += 360;
+
+        // Delta Alt
+        var dAlt = current.Altitude - target.Altitude;
+
+        // Screen Coords:
+        // X maps to Azimuth (Right is Positive Az? No, Usually Right is East)
+        // If Az increases East (CW from North), then +Az is Right.
+        var x = dAz * PixelsPerDegree;
+        
+        // Y maps to Altitude (Up is Positive Alt)
+        // Screen Y is Down. So -dAlt.
+        var y = -dAlt * PixelsPerDegree;
+
+        // Clamp to circle (optional, or let it disappear)
+        // We'll clamp to box for simplicity
+        x = Math.Clamp(x, -95, 95);
+        y = Math.Clamp(y, -95, 95);
+
+        return (x, y);
+    }
+}

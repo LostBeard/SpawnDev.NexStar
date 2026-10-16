@@ -1,0 +1,178 @@
+@page "/about"
+
+<PageTitle>About - NexStar Control</PageTitle>
+
+<div class="about-page">
+    <h1>🔭 SpawnDev.NexStar</h1>
+    
+    <section class="about-section">
+        <h2>About</h2>
+        <p>
+            <strong>SpawnDev.NexStar</strong> provides tools to communicate with and control 
+            Celestron NexStar telescopes using the Web Serial API in Blazor WebAssembly.
+        </p>
+        <p>
+            This library is built on top of <a href="https://github.com/LostBeard/SpawnDev.SpawnJS" target="_blank">SpawnDev.SpawnJS</a>, 
+            which provides full JavaScript interop for Blazor WebAssembly applications.
+        </p>
+    </section>
+
+    <section class="about-section">
+        <h2>Supported Telescopes</h2>
+        <p>The library supports telescopes using the NexStar Communication Protocol, including:</p>
+        <ul>
+            <li><strong>NexStar SLT Series</strong> (including SLT 127)</li>
+            <li>NexStar SE Series (4/5/6/8 SE)</li>
+            <li>NexStar GPS Series</li>
+            <li>Advanced GT</li>
+            <li>Advanced VX</li>
+            <li>CGE / CGEM</li>
+            <li>CPC Series</li>
+            <li>NexStar Evolution</li>
+        </ul>
+    </section>
+
+    <section class="about-section">
+        <h2>Features</h2>
+        <ul>
+            <li>🔌 Web Serial API connection via USB-to-Serial adapter</li>
+            <li>📍 Get/Set telescope position (RA/Dec and Az/Alt)</li>
+            <li>🎯 GoTo commands with standard and precise (sub-arcsecond) accuracy</li>
+            <li>🕹 Manual slewing with variable rates</li>
+            <li>🔄 Tracking mode control (Off, Alt-Az, EQ North/South)</li>
+            <li>⏱ Time and date synchronization</li>
+            <li>🌍 Location configuration</li>
+            <li>✅ Alignment status monitoring</li>
+        </ul>
+    </section>
+
+    <section class="about-section">
+        <h2>Requirements</h2>
+        <ul>
+            <li>A Chromium-based browser (Chrome, Edge) with Web Serial API support</li>
+            <li>USB-to-Serial adapter (e.g., Prolific PL2303)</li>
+            <li>RS-232 cable connected to telescope hand controller</li>
+        </ul>
+    </section>
+
+    <section class="about-section">
+        <h2>Links</h2>
+        <div class="link-grid">
+            <a href="https://github.com/LostBeard/SpawnDev.NexStar" target="_blank" class="link-card">
+                <span class="icon">📦</span>
+                <span class="text">GitHub Repository</span>
+            </a>
+            <a href="https://www.nuget.org/packages/SpawnDev.NexStar" target="_blank" class="link-card">
+                <span class="icon">📥</span>
+                <span class="text">NuGet Package</span>
+            </a>
+            <a href="https://github.com/LostBeard/SpawnDev.SpawnJS" target="_blank" class="link-card">
+                <span class="icon">⚡</span>
+                <span class="text">SpawnDev.SpawnJS</span>
+            </a>
+        </div>
+    </section>
+
+    <section class="about-section credits">
+        <p>Created by <a href="https://github.com/LostBeard" target="_blank">LostBeard</a></p>
+        <p>Licensed under MIT</p>
+    </section>
+</div>
+
+<style>
+    .about-page {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 1rem;
+        color: #e2e8f0;
+    }
+
+    .about-page h1 {
+        color: white;
+        margin-bottom: 1.5rem;
+        font-size: 1.8rem;
+    }
+
+    .about-section {
+        background: #1e293b;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .about-section h2 {
+        margin: 0 0 1rem 0;
+        font-size: 1.2rem;
+        color: white;
+        border-bottom: 1px solid #334155;
+        padding-bottom: 0.5rem;
+    }
+
+    .about-section p {
+        line-height: 1.6;
+        margin-bottom: 0.75rem;
+    }
+
+    .about-section a {
+        color: #60a5fa;
+        text-decoration: none;
+    }
+
+    .about-section a:hover {
+        text-decoration: underline;
+    }
+
+    .about-section ul {
+        margin: 0;
+        padding-left: 1.5rem;
+    }
+
+    .about-section li {
+        margin-bottom: 0.5rem;
+        line-height: 1.5;
+    }
+
+    .link-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+    }
+
+    .link-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 1rem;
+        background: #0f172a;
+        border-radius: 8px;
+        text-decoration: none !important;
+        color: white;
+        transition: all 0.2s;
+    }
+
+    .link-card:hover {
+        background: #1e3a5f;
+        transform: translateY(-2px);
+    }
+
+    .link-card .icon {
+        font-size: 1.5rem;
+    }
+
+    .link-card .text {
+        font-size: 0.9rem;
+        color: #94a3b8;
+    }
+
+    .credits {
+        text-align: center;
+        background: transparent;
+        padding: 1rem 0;
+    }
+
+    .credits p {
+        margin: 0.25rem 0;
+        color: #64748b;
+    }
+</style>

@@ -1,0 +1,205 @@
+@page "/orbital-tracker"
+@using SGPdotNET.TLE
+@using SpawnDev.NexStar.App.Services
+@using static SpawnDev.NexStar.App.Services.SatelliteService
+@inject SatelliteService SatService
+@inject NexStarService NexStar
+@inject LocationService LocationService
+
+<PageTitle>Orbital Tracker - NexStar Control</PageTitle>
+
+<div class="container-fluid p-3">
+    <div class="row mb-3">
+        <div class="col">
+            <h2 class="text-danger"><i class="fas fa-satellite"></i> Orbital Tracker</h2>
+        </div>
+    </div>
+
+    @if (LocationService.Location == null)
+    {
+        <div class="alert alert-warning">
+            <i class="fas fa-map-marker-slash"></i> Location is unknown. Please connect telescope or enable GPS in Settings.
+        </div>
+    }
+    else
+    {
+        <!-- Controls -->
+        <div class="row g-2 mb-3">
+            <div class="col-md-4">
+                <label class="form-label text-light">Category</label>
+                <select class="form-select bg-dark text-light border-secondary" @onchange="OnCategoryChanged">
+                    @foreach (var cat in SatService.Categories)
+                    {
+                        <option value="@cat.UrlKey">@cat.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label text-light">Satellite (@Satellites.Count)</label>
+                <select class="form-select bg-dark text-light border-secondary" @onchange="OnSatelliteChanged">
+                    <option value="">-- Select Object --</option>
+                    @foreach (var sat in Satellites)
+                    {
+                        <option value="@sat.Name">@sat.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                 <button class="btn btn-outline-light w-100" @onclick="ReloadTles" disabled="@IsLoading">
+                    @if (IsLoading) { <span class="spinner-border spinner-border-sm"></span> }
+                    else { <i class="fas fa-sync"></i> } Refresh
+                </button>
+            </div>
+        </div>
+
+        <!-- Info & Tracking -->
+        @if (SelectedSatellite != null)
+        {
+            <div class="card bg-black border-danger mb-3">
+                <div class="card-body">
+                    <h3 class="card-title text-danger">@SelectedSatellite.Name</h3>
+                    
+                    <div class="row text-center mt-4">
+                        <div class="col-6">
+                            <h1 class="display-4 text-white">@CurrentPosition?.TopocentricAzimuth.ToString("F2")°</h1>
+                            <small class="text-muted">AZIMUTH</small>
+                        </div>
+                        <div class="col-6">
+                            <h1 class="display-4 text-white">@CurrentPosition?.TopocentricAltitude.ToString("F2")°</h1>
+                            <small class="text-muted">ALTITUDE</small>
+                        </div>
+                    </div>
+                    
+                    <div class="row mt-3 text-center">
+                        <div class="col">
+                             <span class="badge bg-secondary">Range: @(CurrentPosition?.RangeKm.ToString("F0") ?? "-") km</span>
+                        </div>
+                    </div>
+
+                    <div class="row mt-4">
+                        <div class="col">
+                             @if (IsTracking)
+                            {
+                                <button class="btn btn-danger btn-lg w-100 heartbeat" @onclick="ToggleTracking">
+                                    <i class="fas fa-stop"></i> STOP TRACKING
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-outline-danger btn-lg w-100" @onclick="ToggleTracking" disabled="@(!NexStar.SerialPortSelected)">
+                                    <i class="fas fa-crosshairs"></i> TRACK OBJECT
+                                </button>
+                                @if (!NexStar.SerialPortSelected)
+                                {
+                                    <div class="text-center mt-1"><small class="text-muted">Connect telescope to track</small></div>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private List<Tle> Satellites = new();
+    private Tle? SelectedSatellite;
+    private bool IsLoading;
+    private string CurrentCategory = "stations";
+    private SatellitePosition? CurrentPosition;
+    private System.Threading.Timer? UpdateTimer;
+    private bool IsTracking;
+    private DateTime LastTrackCommandTime = DateTime.MinValue;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSatellites(CurrentCategory);
+        UpdateTimer = new System.Threading.Timer(OnTimerTick, null, 0, 500); // Update UI every 500ms
+    }
+
+    private async Task OnCategoryChanged(ChangeEventArgs e)
+    {
+        CurrentCategory = e.Value?.ToString() ?? "stations";
+        await LoadSatellites(CurrentCategory);
+    }
+
+    private async Task ReloadTles()
+    {
+        await LoadSatellites(CurrentCategory);
+    }
+
+    private async Task LoadSatellites(string category)
+    {
+        IsLoading = true;
+        StateHasChanged();
+        Satellites = await SatService.GetTlesAsync(category);
+        SelectedSatellite = null;
+        IsLoading = false;
+        StateHasChanged();
+    }
+
+    private void OnSatelliteChanged(ChangeEventArgs e)
+    {
+        var name = e.Value?.ToString();
+        SelectedSatellite = Satellites.FirstOrDefault(s => s.Name == name);
+        UpdatePosition();
+    }
+
+    private void OnTimerTick(object? state)
+    {
+        if (SelectedSatellite == null || LocationService.Location == null) return;
+        
+        // UI Update
+        UpdatePosition();
+        InvokeAsync(StateHasChanged);
+
+        // Tracking Logic
+        if (IsTracking && NexStar.SerialPortSelected && CurrentPosition != null)
+        {
+             // Send GoTo command every 2 seconds to avoid flooding? 
+             // Or check if we drifted significantly? 
+             // ISS moves fast, maybe 1 second is fine if minimal latency.
+             if ((DateTime.UtcNow - LastTrackCommandTime).TotalSeconds >= 1.5)
+             {
+                 _ = NexStar.GotoAzAltAsync(CurrentPosition.TopocentricAzimuth, CurrentPosition.TopocentricAltitude);
+                 LastTrackCommandTime = DateTime.UtcNow;
+             }
+        }
+    }
+
+    private void UpdatePosition()
+    {
+        if (SelectedSatellite != null && LocationService.Location != null)
+        {
+            CurrentPosition = SatService.CalculatePosition(SelectedSatellite, LocationService.Location);
+        }
+    }
+
+    private void ToggleTracking()
+    {
+        IsTracking = !IsTracking;
+        if (!IsTracking)
+        {
+            // Stop logic if needed? Usually just stop sending GoTo
+        }
+    }
+
+    public void Dispose()
+    {
+        UpdateTimer?.Dispose();
+    }
+}
+
+<style>
+    .heartbeat {
+        animation: heartbeat 1.5s ease-in-out infinite both;
+    }
+    @@keyframes heartbeat {
+        from { transform: scale(1); transform-origin: center center; animation-timing-function: ease-out; }
+        10% { transform: scale(0.96); animation-timing-function: ease-in; }
+        17% { transform: scale(0.98); animation-timing-function: ease-out; }
+        33% { transform: scale(0.92); animation-timing-function: ease-in; }
+        45% { transform: scale(1); animation-timing-function: ease-out; }
+    }
+</style>

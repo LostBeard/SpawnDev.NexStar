@@ -1,0 +1,193 @@
+@page "/plane-tracker"
+@using SpawnDev.NexStar.App.Services
+@using static SpawnDev.NexStar.App.Services.PlaneService
+@inject PlaneService PlaneService
+@inject NexStarService NexStar
+@inject LocationService LocationService
+@implements IDisposable
+
+<PageTitle>Plane Tracker - NexStar Control</PageTitle>
+
+<div class="container-fluid p-3">
+    <div class="row mb-3">
+        <div class="col">
+            <h2 class="text-info"><i class="fas fa-plane"></i> Plane Tracker</h2>
+        </div>
+    </div>
+
+    @if (LocationService.Location == null)
+    {
+        <div class="alert alert-warning">
+            <i class="fas fa-map-marker-slash"></i> Location is unknown. Please connect telescope or enable GPS in Settings.
+        </div>
+    }
+    else
+    {
+        <!-- Controls -->
+        <div class="row g-2 mb-3">
+            <div class="col-md-10">
+                <label class="form-label text-light">Nearby Aircraft (@Aircraft.Count)</label>
+                <select class="form-select bg-dark text-light border-secondary" @onchange="OnAircraftChanged">
+                    <option value="">-- Select Aircraft --</option>
+                    @foreach (var plane in Aircraft.OrderByDescending(p => p.Altitude))
+                    {
+                        <option value="@plane.Icao24">@(plane.Callsign ?? plane.Icao24) - Alt: @(plane.BaroAltitude?.ToString("F0") ?? "?")m, Dist: @(plane.DistanceKm?.ToString("F1") ?? "?")km</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button class="btn btn-outline-light w-100" @onclick="RefreshAircraft" disabled="@IsLoading">
+                    @if (IsLoading) { <span class="spinner-border spinner-border-sm"></span> }
+                    else { <i class="fas fa-sync"></i> } Refresh
+                </button>
+            </div>
+        </div>
+
+        <!-- Info & Tracking -->
+        @if (SelectedAircraft != null)
+        {
+            <div class="card bg-black border-info mb-3">
+                <div class="card-body">
+                    <h3 class="card-title text-info">@(SelectedAircraft.Callsign ?? SelectedAircraft.Icao24)</h3>
+                    <small class="text-muted">@SelectedAircraft.OriginCountry</small>
+                    
+                    <div class="row text-center mt-4">
+                        <div class="col-6">
+                            <h1 class="display-4 text-white">@SelectedAircraft.Azimuth?.ToString("F1")°</h1>
+                            <small class="text-muted">AZIMUTH</small>
+                        </div>
+                        <div class="col-6">
+                            <h1 class="display-4 text-white">@SelectedAircraft.Altitude?.ToString("F1")°</h1>
+                            <small class="text-muted">ELEVATION</small>
+                        </div>
+                    </div>
+                    
+                    <div class="row mt-3 text-center">
+                        <div class="col-4">
+                            <span class="badge bg-secondary">Dist: @(SelectedAircraft.DistanceKm?.ToString("F1") ?? "-") km</span>
+                        </div>
+                        <div class="col-4">
+                            <span class="badge bg-secondary">Alt: @(SelectedAircraft.BaroAltitude?.ToString("F0") ?? "-") m</span>
+                        </div>
+                        <div class="col-4">
+                            <span class="badge bg-secondary">Speed: @(SelectedAircraft.Velocity.HasValue ? (SelectedAircraft.Velocity.Value * 3.6).ToString("F0") : "-") km/h</span>
+                        </div>
+                    </div>
+
+                    <div class="row mt-4">
+                        <div class="col">
+                            @if (IsTracking)
+                            {
+                                <button class="btn btn-info btn-lg w-100 heartbeat" @onclick="ToggleTracking">
+                                    <i class="fas fa-stop"></i> STOP TRACKING
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-outline-info btn-lg w-100" @onclick="ToggleTracking" disabled="@(!NexStar.SerialPortSelected)">
+                                    <i class="fas fa-crosshairs"></i> TRACK AIRCRAFT
+                                </button>
+                                @if (!NexStar.SerialPortSelected)
+                                {
+                                    <div class="text-center mt-1"><small class="text-muted">Connect telescope to track</small></div>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private List<Aircraft> Aircraft = new();
+    private Aircraft? SelectedAircraft;
+    private bool IsLoading;
+    private bool IsTracking;
+    private System.Threading.Timer? UpdateTimer;
+    private DateTime LastTrackCommandTime = DateTime.MinValue;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAircraft();
+        // Auto-refresh every 10 seconds
+        UpdateTimer = new System.Threading.Timer(OnTimerTick, null, 10000, 10000);
+    }
+
+    private async Task RefreshAircraft()
+    {
+        if (LocationService.Location == null) return;
+        
+        IsLoading = true;
+        StateHasChanged();
+        
+        Aircraft = await PlaneService.GetNearbyAircraftAsync(LocationService.Location);
+        
+        // If we had a selected aircraft, try to find it again
+        if (SelectedAircraft != null)
+        {
+            SelectedAircraft = Aircraft.FirstOrDefault(p => p.Icao24 == SelectedAircraft.Icao24);
+        }
+        
+        IsLoading = false;
+        StateHasChanged();
+    }
+
+    private void OnAircraftChanged(ChangeEventArgs e)
+    {
+        var icao24 = e.Value?.ToString();
+        SelectedAircraft = Aircraft.FirstOrDefault(p => p.Icao24 == icao24);
+    }
+
+    private async void OnTimerTick(object? state)
+    {
+        // Refresh data
+        if (LocationService.Location != null)
+        {
+            Aircraft = await PlaneService.GetNearbyAircraftAsync(LocationService.Location);
+            
+            // Update selected aircraft with new data
+            if (SelectedAircraft != null)
+            {
+                SelectedAircraft = Aircraft.FirstOrDefault(p => p.Icao24 == SelectedAircraft.Icao24);
+            }
+        }
+
+        // Tracking logic
+        if (IsTracking && NexStar.SerialPortSelected && SelectedAircraft != null && 
+            SelectedAircraft.Azimuth.HasValue && SelectedAircraft.Altitude.HasValue)
+        {
+            if ((DateTime.UtcNow - LastTrackCommandTime).TotalSeconds >= 2)
+            {
+                _ = NexStar.GotoAzAltAsync(SelectedAircraft.Azimuth.Value, SelectedAircraft.Altitude.Value);
+                LastTrackCommandTime = DateTime.UtcNow;
+            }
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ToggleTracking()
+    {
+        IsTracking = !IsTracking;
+    }
+
+    public void Dispose()
+    {
+        UpdateTimer?.Dispose();
+    }
+}
+
+<style>
+    .heartbeat {
+        animation: heartbeat 1.5s ease-in-out infinite both;
+    }
+    @@keyframes heartbeat {
+        from { transform: scale(1); transform-origin: center center; animation-timing-function: ease-out; }
+        10% { transform: scale(0.96); animation-timing-function: ease-in; }
+        17% { transform: scale(0.98); animation-timing-function: ease-out; }
+        33% { transform: scale(0.92); animation-timing-function: ease-in; }
+        45% { transform: scale(1); animation-timing-function: ease-out; }
+    }
+</style>
