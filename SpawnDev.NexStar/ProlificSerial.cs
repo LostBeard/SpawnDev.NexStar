@@ -6,8 +6,12 @@ namespace SpawnDev.NexStar;
 /// <summary>
 /// Prolific PL2303 USB-to-Serial adapter support base class.
 /// </summary>
-public abstract class ProlificSerial : IProlificSerial
+public abstract class ProlificSerial : INexStarTransport
 {
+    /// <summary>
+    /// Frames and serialises commands; the subclass writes bytes to its device and feeds every received byte to <see cref="NexStarCommandChannel.OnBytes"/>.
+    /// </summary>
+    protected readonly NexStarCommandChannel Channel = new();
 
     /// <summary>
     /// Fired when a serial port is connected
@@ -18,7 +22,7 @@ public abstract class ProlificSerial : IProlificSerial
     /// <summary>
     /// Fired when a serial port is disconnected
     /// </summary>
-    public event Action<ProlificSerial> OnDisconnect = default!;
+    public event Action<INexStarTransport> OnDisconnect = default!;
     protected void DisconnectedEvent() => OnDisconnect?.Invoke(this);
     /// <summary>
     /// Fired when raw data is received
@@ -53,14 +57,14 @@ public abstract class ProlificSerial : IProlificSerial
     };
 
     /// <summary>
-    /// Command timeout in milliseconds
+    /// Command timeout in milliseconds. The hand control can take up to 3.5 s to answer a command it has to
+    /// relay to a motor board (Celestron protocol, "Timeouts"), so this must stay above that.
     /// </summary>
-    public const int CommandTimeoutMs = 2000;
+    public const int CommandTimeoutMs = NexStarCommandChannel.DefaultTimeoutMs;
 
     #endregion
     public abstract Task<bool> OpenAsync(SerialOptions? serialOptions = null);
     public abstract Task CloseAsync();
-    public abstract Task<string?> SendStringCommandAsync(string data, int timeoutMs = CommandTimeoutMs);
     public abstract Task<byte[]?> SendCommandAsync(byte[] command, int timeoutMs = CommandTimeoutMs);
     /// <summary>
     /// JS interop runtime

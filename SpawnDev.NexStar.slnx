@@ -1,4 +1,8 @@
 <Solution>
   <Project Path="SpawnDev.NexStar.App/SpawnDev.NexStar.App.csproj" />
   <Project Path="SpawnDev.NexStar/SpawnDev.NexStar.csproj" />
+  <Project Path="SpawnDev.NexStar.Desktop/SpawnDev.NexStar.Desktop.csproj" />
+  <Project Path="SpawnDev.NexStar.Tests/SpawnDev.NexStar.Tests.csproj" />
+  <Project Path="SpawnDev.NexStar.TestConsole/SpawnDev.NexStar.TestConsole.csproj" />
+  <Project Path="PlaywrightMultiTest/PlaywrightMultiTest.csproj" />
 </Solution>

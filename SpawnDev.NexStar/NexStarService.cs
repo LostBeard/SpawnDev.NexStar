@@ -1,17 +1,20 @@
 ﻿using SpawnDev.SpawnJS;
+using System.Text;
 
 namespace SpawnDev.NexStar
 {
     /// <summary>
     /// Service for communicating with and controlling Celestron NexStar telescopes
-    /// using the Web Serial API.<br/>
-    /// Reference: https://developer.chrome.com/docs/capabilities/serial
+    /// over WebSerial, WebUSB (browser) or any other <see cref="INexStarTransport"/>.<br/>
+    /// Every query returns null (or leaves the cached value alone) when the hand control does not answer:
+    /// a failed read never becomes a position, a time or a state.
     /// </summary>
     public class NexStarService : IAsyncBackgroundService
     {
         #region Private Fields
-        private SpawnJSRuntime JS;
+        private SpawnJSRuntime? JS;
         private Task? _Ready = null;
+        private bool _disconnecting;
 
         #endregion
 
@@ -28,24 +31,29 @@ namespace SpawnDev.NexStar
         public Task Ready => _Ready ??= InitAsync();
 
         /// <summary>
-        /// Currently selected serial port
+        /// The link to the hand control, or null when not connected
         /// </summary>
-        public ProlificSerial? SerialPort { get; private set; }
+        public INexStarTransport? Transport { get; private set; }
 
         /// <summary>
-        /// Whether a serial port is connected and available
+        /// Whether a port is connected and available
         /// </summary>
-        public bool SerialPortAvailable => SerialPort?.Connected == true;
+        public bool SerialPortAvailable => Transport?.Connected == true;
 
         /// <summary>
-        /// Whether a serial port has been selected
+        /// Whether a port has been selected
         /// </summary>
-        public bool SerialPortSelected => SerialPort != null;
+        public bool SerialPortSelected => Transport != null;
 
         /// <summary>
         /// Whether communications are currently enabled
         /// </summary>
-        public bool ComsEnabled => SerialPort?.Connected == true;
+        public bool ComsEnabled => Transport?.Connected == true;
+
+        /// <summary>
+        /// Why the last connection attempt failed, or null
+        /// </summary>
+        public string? LastError { get; private set; }
 
         /// <summary>
         /// Telescope model (retrieved after connection)
@@ -68,7 +76,8 @@ namespace SpawnDev.NexStar
         public int VersionMinor { get; private set; }
 
         /// <summary>
-        /// Whether the telescope is aligned
+        /// Whether the telescope is aligned. An unaligned mount reports RA/Dec that mean nothing and
+        /// Az/Alt relative to where it was powered on; RA/Dec GoTo does not work until it is aligned.
         /// </summary>
         public bool IsAligned { get; private set; }
 
@@ -92,27 +101,27 @@ namespace SpawnDev.NexStar
         /// </summary>
         public GeoLocation? Location { get; private set; }
 
+        /// <summary>
+        /// The hand control's clock as last read
+        /// </summary>
+        public TelescopeTime? CurrentTime { get; private set; }
+
         #endregion
 
         #region Events
 
         /// <summary>
-        /// Fired when a serial port is connected
+        /// Fired when a port is connected
         /// </summary>
-        public event Action<ProlificSerial> OnConnected = default!;
+        public event Action<INexStarTransport> OnConnected = default!;
 
         /// <summary>
-        /// Fired when a serial port is disconnected
+        /// Fired when a port is disconnected
         /// </summary>
-        public event Action<ProlificSerial> OnDisconnected = default!;
+        public event Action<INexStarTransport> OnDisconnected = default!;
 
         /// <summary>
-        /// Fired when raw data is received
-        /// </summary>
-        public event Action<byte[]> OnData = default!;
-
-        /// <summary>
-        /// Fired when telescope status is updated
+        /// Fired when telescope status changes: a connection opens or closes, or any state is refreshed
         /// </summary>
         public event Action OnStatusChanged = default!;
 
@@ -131,7 +140,7 @@ namespace SpawnDev.NexStar
         #region Constructor
 
         /// <summary>
-        /// Creates a new NexStarService instance
+        /// Creates a NexStarService that can open browser ports (WebSerial, WebUSB)
         /// </summary>
         public NexStarService(SpawnJSRuntime js)
         {
@@ -140,91 +149,115 @@ namespace SpawnDev.NexStar
             WebUSBSupported = JS.IsBrowser && JS.Has("navigator.usb");
         }
 
+        /// <summary>
+        /// Creates a NexStarService with no browser: connect with <see cref="AttachTransportAsync"/>
+        /// </summary>
+        public NexStarService()
+        {
+        }
+
         #endregion
 
         #region Initialization
 
         /// <summary>
-        /// Initializes the service, loading polyfills if necessary (e.g. for Android)
+        /// Initializes the service
         /// </summary>
-        private async Task InitAsync()
-        {
-            if (!JS.IsBrowser) return;
-            // Nothing at this time - reserved for future use
-        }
+        private Task InitAsync() => Task.CompletedTask;
 
         #endregion
 
         #region Port Selection & Connection
 
         /// <summary>
-        /// Opens device picker and selects a serial port
+        /// Opens the browser's device picker and connects to the chosen port
         /// </summary>
-        /// <returns>True if a valid NexStar port was selected</returns>
+        /// <returns>True if a NexStar hand control answered</returns>
         public async Task<bool> SelectPortAsync(bool useWebUSB = false)
         {
-            if (SerialPort?.Connected == true)
+            if (Transport?.Connected == true)
             {
                 return true;
             }
+            if (JS == null)
+            {
+                LastError = "No browser runtime: use AttachTransportAsync";
+                return false;
+            }
+            LastError = null;
             ProlificSerial? serialPort = null;
             try
             {
-                if (useWebUSB)
-                {
-                    serialPort = await ProlificSerial.OpenWithWebUSB();
-                }
-                else
-                {
-                    serialPort = await ProlificSerial.OpenWithWebSerial();
-                }
+                serialPort = useWebUSB
+                    ? await ProlificSerial.OpenWithWebUSB()
+                    : await ProlificSerial.OpenWithWebSerial();
             }
-            catch
+            catch (Exception ex)
             {
+                LastError = $"{ex.GetType().Name}: {ex.Message}";
                 return false;
             }
-            if (serialPort != null)
+            if (serialPort == null)
             {
-                if (SerialPort != null)
-                {
-                    await SerialPort.CloseAsync();
-                    SerialPort!.OnDisconnect -= SerialPort_OnDisconnect;
-                    OnDisconnected?.Invoke(SerialPort);
-                    SerialPort = null;
-                }
-                SerialPort = serialPort;
-                SerialPort.OnDisconnect += SerialPort_OnDisconnect;
-                OnConnected?.Invoke(SerialPort);
-                await RefreshTelescopeInfoAsync();
-                await GetRaDecAsync();
-                await GetAzAltAsync();
-                await GetTimeAsync();
-                await GetLocationAsync();
-                return true;
+                LastError = "No device was chosen, or the port could not be opened";
+                return false;
             }
-            return false;
+            return await AttachTransportAsync(serialPort);
         }
 
         /// <summary>
-        /// Deselects the current port
+        /// Connects over an already open transport and reads the hand control's state.
+        /// </summary>
+        /// <returns>True if the hand control answered; otherwise the transport is closed and <see cref="LastError"/> says why</returns>
+        public async Task<bool> AttachTransportAsync(INexStarTransport transport)
+        {
+            if (Transport != null)
+            {
+                await DeselectPortAsync();
+            }
+            LastError = null;
+            Transport = transport;
+            transport.OnDisconnect += Transport_OnDisconnect;
+            OnConnected?.Invoke(transport);
+            OnStatusChanged?.Invoke();
+            if (await GetVersionAsync() == null)
+            {
+                LastError = "The port opened but the hand control did not answer";
+                await DeselectPortAsync();
+                return false;
+            }
+            await RefreshTelescopeInfoAsync();
+            await GetRaDecAsync();
+            await GetAzAltAsync();
+            await GetTimeAsync();
+            await GetLocationAsync();
+            return true;
+        }
+
+        /// <summary>
+        /// Disconnects the current port
         /// </summary>
         public async Task DeselectPortAsync()
         {
-            if (SerialPort != null)
+            var transport = Transport;
+            if (transport == null || _disconnecting) return;
+            _disconnecting = true;
+            try
             {
-                var serialPort = SerialPort;
-                await serialPort.CloseAsync();
-                serialPort.OnDisconnect -= SerialPort_OnDisconnect;
-                OnDisconnected?.Invoke(serialPort);
-                SerialPort = null;
-                await serialPort.Forget();
+                transport.OnDisconnect -= Transport_OnDisconnect;
+                Transport = null;
                 ResetTelescopeState();
+                try { await transport.CloseAsync(); } catch (Exception ex) { LastError = $"{ex.GetType().Name}: {ex.Message}"; }
+                try { await transport.Forget(); } catch { }
+                OnDisconnected?.Invoke(transport);
+                OnStatusChanged?.Invoke();
+            }
+            finally
+            {
+                _disconnecting = false;
             }
         }
 
-        #endregion
-
-        #region
         private void ResetTelescopeState()
         {
             Model = TelescopeModel.Unknown;
@@ -236,15 +269,26 @@ namespace SpawnDev.NexStar
             CurrentRaDec = null;
             CurrentAzAlt = null;
             Location = null;
+            CurrentTime = null;
         }
 
         #endregion
 
+        #region Command plumbing
+
+        private Task<byte[]?> SendAsync(byte[] command) => Transport?.SendCommandAsync(command) ?? Task.FromResult<byte[]?>(null);
+
+        private Task<byte[]?> SendAsync(string asciiCommand) => SendAsync(Encoding.ASCII.GetBytes(asciiCommand));
+
+        /// <summary>True for a plain acknowledgement: the response was just the '#'.</summary>
+        private static bool Acknowledged(byte[]? payload) => payload != null && payload.Length == 0;
+
+        #endregion
 
         #region Telescope Commands - Basic
 
         /// <summary>
-        /// Refreshes telescope info (version, model, alignment)
+        /// Refreshes telescope info (version, model, alignment, tracking)
         /// </summary>
         public async Task RefreshTelescopeInfoAsync()
         {
@@ -259,126 +303,104 @@ namespace SpawnDev.NexStar
         /// </summary>
         public async Task<string?> GetVersionAsync()
         {
-            if (SerialPort == null) return null;
-            var response = await SerialPort.SendCommandAsync(new byte[] { (byte)'V' });
-            if (response == null || response.Length < 2) return null;
-
-            VersionMajor = response[0];
-            VersionMinor = response[1];
+            var payload = await SendAsync("V");
+            if (payload == null || payload.Length != 2) return null;
+            VersionMajor = payload[0];
+            VersionMinor = payload[1];
             Version = $"{VersionMajor}.{VersionMinor}";
             OnStatusChanged?.Invoke();
             return Version;
         }
 
         /// <summary>
-        /// Gets the telescope model
+        /// Gets the telescope model; <see cref="TelescopeModel.Unknown"/> if it did not answer or the id is not a known model
         /// </summary>
         public async Task<TelescopeModel> GetModelAsync()
         {
-            if (SerialPort == null) return TelescopeModel.Unknown;
-            var response = await SerialPort.SendCommandAsync(new byte[] { (byte)'m' });
-            if (response == null || response.Length < 2) return TelescopeModel.Unknown;
-
-            var modelId = response[0];
-            Model = Enum.IsDefined(typeof(TelescopeModel), (int)modelId)
-                ? (TelescopeModel)modelId
+            var payload = await SendAsync("m");
+            if (payload == null || payload.Length != 1) return TelescopeModel.Unknown;
+            Model = Enum.IsDefined(typeof(TelescopeModel), (int)payload[0])
+                ? (TelescopeModel)payload[0]
                 : TelescopeModel.Unknown;
             OnStatusChanged?.Invoke();
             return Model;
         }
 
         /// <summary>
-        /// Sends an echo command for testing
+        /// Sends an echo command for testing; returns the character the hand control sent back
         /// </summary>
         public async Task<char?> EchoAsync(char testChar)
         {
-            if (SerialPort == null) return null;
-            var response = await SerialPort.SendCommandAsync(new byte[] { (byte)'K', (byte)testChar });
-            if (response == null || response.Length < 2) return null;
-            return (char)response[0];
+            var payload = await SendAsync(new byte[] { (byte)'K', (byte)testChar });
+            if (payload == null || payload.Length != 1) return null;
+            return (char)payload[0];
         }
 
         /// <summary>
-        /// Gets alignment status
+        /// Gets alignment status; null if the hand control did not answer
         /// </summary>
-        public async Task<bool> GetAlignmentStatusAsync()
+        public async Task<bool?> GetAlignmentStatusAsync()
         {
-            if (SerialPort == null) return false;
-            var response = await SerialPort.SendCommandAsync(new byte[] { (byte)'J' });
-            if (response == null || response.Length < 2) return false;
-            IsAligned = response[0] == 1;
+            var payload = await SendAsync("J");
+            if (payload == null || payload.Length != 1) return null;
+            IsAligned = payload[0] == 1;
             OnStatusChanged?.Invoke();
             return IsAligned;
         }
 
         /// <summary>
-        /// Checks if a GoTo operation is in progress
+        /// Checks if a GoTo operation is in progress; null if the hand control did not answer
+        /// (a failed read must not look like "finished")
         /// </summary>
-        public async Task<bool> IsGotoInProgressAsync()
+        public async Task<bool?> IsGotoInProgressAsync()
         {
-            if (SerialPort == null) return false;
-            var response = await SerialPort.SendStringCommandAsync("L");
-            return response == "1";
+            var payload = await SendAsync("L");
+            if (payload == null || payload.Length != 1) return null;
+            return payload[0] == (byte)'1';
         }
 
         /// <summary>
         /// Cancels any GoTo operation in progress
         /// </summary>
-        public async Task<bool> CancelGotoAsync()
-        {
-            if (SerialPort == null) return false;
-            var response = await SerialPort.SendStringCommandAsync("M");
-            return response != null;
-        }
+        public async Task<bool> CancelGotoAsync() => Acknowledged(await SendAsync("M"));
 
         #endregion
 
         #region Telescope Commands - Position
 
         /// <summary>
-        /// Gets current RA/Dec position
+        /// Gets current RA/Dec position (meaningless until the mount is aligned)
         /// </summary>
         /// <param name="precise">Use precise (32-bit) format for sub-arcsecond accuracy</param>
         public async Task<RaDecCoordinates?> GetRaDecAsync(bool precise = false)
         {
-            if (SerialPort == null) return null;
-            var cmd = precise ? "e" : "E";
-            var response = await SerialPort.SendStringCommandAsync(cmd);
-            if (response == null) return null;
-
-            var (ra, dec) = NexStarProtocol.ParsePositionResponse(response);
+            var payload = await SendAsync(precise ? "e" : "E");
+            if (!NexStarProtocol.TryParsePositionResponse(payload, out var ra, out var dec)) return null;
             CurrentRaDec = new RaDecCoordinates(ra, dec);
             OnStatusChanged?.Invoke();
             return CurrentRaDec;
         }
 
         /// <summary>
-        /// Gets current Az/Alt position
+        /// Gets current Az/Alt position (relative to the power-on direction until the mount is aligned)
         /// </summary>
         /// <param name="precise">Use precise (32-bit) format for sub-arcsecond accuracy</param>
         public async Task<AzAltCoordinates?> GetAzAltAsync(bool precise = false)
         {
-            if (SerialPort == null) return null;
-            var cmd = precise ? "z" : "Z";
-            var response = await SerialPort.SendStringCommandAsync(cmd);
-            if (response == null) return null;
-
-            var (az, alt) = NexStarProtocol.ParsePositionResponse(response);
+            var payload = await SendAsync(precise ? "z" : "Z");
+            if (!NexStarProtocol.TryParsePositionResponse(payload, out var az, out var alt)) return null;
             CurrentAzAlt = new AzAltCoordinates(az, alt);
             OnStatusChanged?.Invoke();
             return CurrentAzAlt;
         }
 
         /// <summary>
-        /// Commands telescope to slew to RA/Dec position
+        /// Commands telescope to slew to RA/Dec position. The hand control ignores this until it is aligned.
         /// </summary>
         public async Task<bool> GotoRaDecAsync(double ra, double dec, bool precise = false)
         {
-            if (SerialPort == null) return false;
-            if (ra < 0 || ra > 360 || dec < -90 || dec > 90) return false;
-            var command = NexStarProtocol.FormatGotoRaDecCommand(ra, dec, precise);
-            var response = await SerialPort.SendCommandAsync(command);
-            return response != null;
+            if (!(ra >= 0 && ra <= 360 && dec >= -90 && dec <= 90)) return false;
+            return Acknowledged(await SendAsync(NexStarProtocol.FormatGotoRaDecCommand(ra, dec, precise)));
         }
 
         /// <summary>
@@ -386,11 +408,8 @@ namespace SpawnDev.NexStar
         /// </summary>
         public async Task<bool> GotoAzAltAsync(double az, double alt, bool precise = false)
         {
-            if (SerialPort == null) return false;
-            if (az < 0 || az > 360 || alt < -90 || alt > 90) return false;
-            var command = NexStarProtocol.FormatGotoAzAltCommand(az, alt, precise);
-            var response = await SerialPort.SendCommandAsync(command);
-            return response != null;
+            if (!(az >= 0 && az <= 360 && alt >= -90 && alt <= 90)) return false;
+            return Acknowledged(await SendAsync(NexStarProtocol.FormatGotoAzAltCommand(az, alt, precise)));
         }
 
         /// <summary>
@@ -398,11 +417,8 @@ namespace SpawnDev.NexStar
         /// </summary>
         public async Task<bool> SyncRaDecAsync(double ra, double dec, bool precise = false)
         {
-            if (SerialPort == null) return false;
-            if (ra < 0 || ra > 360 || dec < -90 || dec > 90) return false;
-            var command = NexStarProtocol.FormatSyncRaDecCommand(ra, dec, precise);
-            var response = await SerialPort.SendCommandAsync(command);
-            return response != null;
+            if (!(ra >= 0 && ra <= 360 && dec >= -90 && dec <= 90)) return false;
+            return Acknowledged(await SendAsync(NexStarProtocol.FormatSyncRaDecCommand(ra, dec, precise)));
         }
 
         #endregion
@@ -413,42 +429,30 @@ namespace SpawnDev.NexStar
         /// Starts slewing at a fixed rate
         /// </summary>
         public async Task<bool> SlewFixedAsync(SlewAxis axis, SlewDirection direction, SlewRate rate)
-        {
-            if (SerialPort == null) return false;
-            var command = NexStarProtocol.FormatFixedSlewCommand(axis, direction, rate);
-            var response = await SerialPort.SendCommandAsync(command);
-            return response != null;
-        }
+            => Acknowledged(await SendAsync(NexStarProtocol.FormatFixedSlewCommand(axis, direction, rate)));
 
         /// <summary>
         /// Starts slewing at a variable rate
         /// </summary>
         /// <param name="axis">Axis to slew</param>
         /// <param name="direction">Direction to slew</param>
-        /// <param name="rateArcsecPerSec">Rate in arcseconds per second (max ~16000)</param>
+        /// <param name="rateArcsecPerSec">Rate in arcseconds per second, clamped to 0 .. <see cref="NexStarProtocol.MaxVariableSlewArcsecPerSec"/></param>
         public async Task<bool> SlewVariableAsync(SlewAxis axis, SlewDirection direction, double rateArcsecPerSec)
-        {
-            if (SerialPort == null) return false;
-            var command = NexStarProtocol.FormatVariableSlewCommand(axis, direction, rateArcsecPerSec);
-            var response = await SerialPort.SendCommandAsync(command);
-            return response != null;
-        }
+            => Acknowledged(await SendAsync(NexStarProtocol.FormatVariableSlewCommand(axis, direction, rateArcsecPerSec)));
 
         /// <summary>
         /// Stops slewing on a specific axis
         /// </summary>
-        public async Task<bool> StopSlewAsync(SlewAxis axis)
-        {
-            return await SlewFixedAsync(axis, SlewDirection.Positive, SlewRate.Stop);
-        }
+        public Task<bool> StopSlewAsync(SlewAxis axis) => SlewFixedAsync(axis, SlewDirection.Positive, SlewRate.Stop);
 
         /// <summary>
-        /// Stops slewing on both axes
+        /// Stops slewing on both axes; true only if both stops were acknowledged
         /// </summary>
-        public async Task StopAllSlewAsync()
+        public async Task<bool> StopAllSlewAsync()
         {
-            await StopSlewAsync(SlewAxis.RaAzm);
-            await StopSlewAsync(SlewAxis.DecAlt);
+            var a = await StopSlewAsync(SlewAxis.RaAzm);
+            var b = await StopSlewAsync(SlewAxis.DecAlt);
+            return a && b;
         }
 
         #endregion
@@ -456,22 +460,13 @@ namespace SpawnDev.NexStar
         #region Telescope Commands - Tracking
 
         /// <summary>
-        /// Gets current tracking mode
+        /// Gets current tracking mode; null if the hand control did not answer or reported a mode this library does not know
         /// </summary>
-        public async Task<TrackingMode> GetTrackingModeAsync()
+        public async Task<TrackingMode?> GetTrackingModeAsync()
         {
-            if (SerialPort == null) return TrackingMode.Off;
-            var response = await SerialPort.SendCommandAsync(new byte[] { (byte)'t' });
-            if (response == null || response.Length < 2) return TrackingMode.Off;
-
-            CurrentTrackingMode = response[0] switch
-            {
-                0 => TrackingMode.Off,
-                1 => TrackingMode.AltAz,
-                2 => TrackingMode.EQNorth,
-                3 => TrackingMode.EQSouth,
-                _ => TrackingMode.Off
-            };
+            var payload = await SendAsync("t");
+            if (payload == null || payload.Length != 1 || payload[0] > 3) return null;
+            CurrentTrackingMode = (TrackingMode)payload[0];
             OnStatusChanged?.Invoke();
             return CurrentTrackingMode;
         }
@@ -481,15 +476,13 @@ namespace SpawnDev.NexStar
         /// </summary>
         public async Task<bool> SetTrackingModeAsync(TrackingMode mode)
         {
-            if (SerialPort == null) return false;
-            var command = new byte[] { (byte)'T', (byte)mode };
-            var response = await SerialPort.SendCommandAsync(command);
-            if (response != null)
+            var ok = Acknowledged(await SendAsync(new byte[] { (byte)'T', (byte)mode }));
+            if (ok)
             {
                 CurrentTrackingMode = mode;
                 OnStatusChanged?.Invoke();
             }
-            return response != null;
+            return ok;
         }
 
         #endregion
@@ -501,32 +494,33 @@ namespace SpawnDev.NexStar
         /// </summary>
         public async Task<TelescopeTime?> GetTimeAsync()
         {
-            if (SerialPort == null) return null;
-            var response = await SerialPort.SendCommandAsync(new byte[] { (byte)'h' });
-            if (response == null || response.Length < 9) return null;
-            return NexStarProtocol.ParseTimeResponse(response);
+            var payload = await SendAsync("h");
+            if (!NexStarProtocol.TryParseTimeResponse(payload, out var time)) return null;
+            CurrentTime = time;
+            OnStatusChanged?.Invoke();
+            return time;
         }
 
         /// <summary>
-        /// Sets telescope time
+        /// Sets telescope time: the local clock time, the zone's STANDARD UTC offset in whole hours, and whether
+        /// daylight saving applies (the hand control adds the hour itself)
         /// </summary>
-        public async Task<bool> SetTimeAsync(DateTime time, int tzOffset, bool dst)
-        {
-            if (SerialPort == null) return false;
-            var command = NexStarProtocol.FormatSetTimeCommand(time, tzOffset, dst);
-            var response = await SerialPort.SendCommandAsync(command);
-            return response != null;
-        }
+        public async Task<bool> SetTimeAsync(DateTime localTime, int standardOffsetHours, bool dst)
+            => Acknowledged(await SendAsync(NexStarProtocol.FormatSetTimeCommand(localTime, standardOffsetHours, dst)));
 
         /// <summary>
-        /// Sets telescope time to current browser time
+        /// Sets the telescope clock from this computer's clock and time zone
         /// </summary>
-        public async Task<bool> SyncTimeAsync()
+        public Task<bool> SyncTimeAsync() => SyncTimeAsync(DateTime.UtcNow, TimeZoneInfo.Local);
+
+        /// <summary>
+        /// Sets the telescope clock so its UTC is <paramref name="utc"/>, using <paramref name="zone"/> for the offset and daylight saving
+        /// (see <see cref="NexStarProtocol.ComputeClock"/>)
+        /// </summary>
+        public Task<bool> SyncTimeAsync(DateTime utc, TimeZoneInfo zone)
         {
-            var now = DateTime.Now;
-            var offset = TimeZoneInfo.Local.GetUtcOffset(now);
-            var isDst = TimeZoneInfo.Local.IsDaylightSavingTime(now);
-            return await SetTimeAsync(now, (int)offset.TotalHours, isDst);
+            var clock = NexStarProtocol.ComputeClock(utc, zone);
+            return SetTimeAsync(clock.LocalTime, clock.TimezoneOffset, clock.DaylightSaving);
         }
 
         /// <summary>
@@ -534,10 +528,9 @@ namespace SpawnDev.NexStar
         /// </summary>
         public async Task<GeoLocation?> GetLocationAsync()
         {
-            if (SerialPort == null) return null;
-            var response = await SerialPort.SendCommandAsync(new byte[] { (byte)'w' });
-            if (response == null || response.Length < 9) return null;
-            Location = NexStarProtocol.ParseLocationResponse(response);
+            var payload = await SendAsync("w");
+            if (!NexStarProtocol.TryParseLocationResponse(payload, out var location)) return null;
+            Location = location;
             OnStatusChanged?.Invoke();
             return Location;
         }
@@ -547,16 +540,14 @@ namespace SpawnDev.NexStar
         /// </summary>
         public async Task<bool> SetLocationAsync(double lat, double lon)
         {
-            if (SerialPort == null) return false;
-            if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return false;
-            var command = NexStarProtocol.FormatSetLocationCommand(lat, lon);
-            var response = await SerialPort.SendCommandAsync(command);
-            if (response != null)
+            if (!(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180)) return false;
+            var ok = Acknowledged(await SendAsync(NexStarProtocol.FormatSetLocationCommand(lat, lon)));
+            if (ok)
             {
                 Location = new GeoLocation(lat, lon);
                 OnStatusChanged?.Invoke();
             }
-            return response != null;
+            return ok;
         }
 
         #endregion
@@ -581,7 +572,7 @@ namespace SpawnDev.NexStar
             }
 
             // Popular Messier Objects (Nebulae, Clusters, Galaxies)
-            // M31 (Andromeda), M42 (Orion), M45 (Pleiades), M13 (Hercules), M57 (Ring), 
+            // M31 (Andromeda), M42 (Orion), M45 (Pleiades), M13 (Hercules), M57 (Ring),
             // M8 (Lagoon), M27 (Dumbbell), M51 (Whirlpool), M44 (Beehive), M11 (Wild Duck)
             var messierNums = new[] { 31, 42, 45, 13, 57, 8, 27, 51, 44, 11, 16, 20, 81, 82 };
             foreach (var num in messierNums)
@@ -615,42 +606,13 @@ namespace SpawnDev.NexStar
 
         #endregion
 
-
-
         #region Event Handlers
 
-        //private async Task UpdateAsync()
-        //{
-        //    if (Serial == null) return;
-
-        //    var ports = (await Serial.GetPorts()).ToArray();
-        //    var serialPort = ports.FirstOrDefault();
-        //    if (serialPort != null && SerialPort == null)
-        //    {
-        //        SerialPort = serialPort;
-        //        SerialPort.OnDisconnect += SerialPort_OnDisconnect;
-        //        OnConnected?.Invoke(SerialPort);
-        //    }
-        //}
-
-        //private void Serial_OnConnect(Event e)
-        //{
-        //    var serialPort = e.TargetAs<SerialPort>();
-        //    if (SerialPort == null && serialPort != null)
-        //    {
-        //        SerialPort = serialPort;
-        //        SerialPort.OnDisconnect += SerialPort_OnDisconnect;
-        //        OnConnected?.Invoke(SerialPort);
-        //    }
-        //}
-
-        private async void SerialPort_OnDisconnect(ProlificSerial e)
+        private void Transport_OnDisconnect(INexStarTransport transport)
         {
-            //await StopComsAsync();
-            if (SerialPort == e)
-            {
-                _ = DeselectPortAsync();
-            }
+            if (Transport != transport) return;
+            // Not async void: an exception here would be unobservable. DeselectPortAsync handles its own failures.
+            _ = DeselectPortAsync();
         }
 
         #endregion

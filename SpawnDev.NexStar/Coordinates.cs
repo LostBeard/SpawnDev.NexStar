@@ -199,14 +199,22 @@ namespace SpawnDev.NexStar
         public DateTime LocalTime { get; set; }
 
         /// <summary>
-        /// Timezone offset from UTC in hours
+        /// The time zone's STANDARD offset from UTC in whole hours (Eastern = -5 even in summer).
+        /// The hand control adds one hour itself when <see cref="DaylightSaving"/> is set, so a summer
+        /// offset here would be counted twice.
         /// </summary>
         public int TimezoneOffset { get; set; }
 
         /// <summary>
-        /// Whether daylight saving time is active
+        /// Whether daylight saving time is in effect (the hand control adds one hour to the standard offset)
         /// </summary>
         public bool DaylightSaving { get; set; }
+
+        /// <summary>
+        /// The UTC instant this telescope time represents: local time minus the standard offset minus the
+        /// daylight saving hour. This is what the hand control uses for sidereal time.
+        /// </summary>
+        public DateTime ToUtc() => DateTime.SpecifyKind(LocalTime.AddHours(-TimezoneOffset - (DaylightSaving ? 1 : 0)), DateTimeKind.Utc);
 
         /// <summary>
         /// Creates a new TelescopeTime instance
@@ -224,6 +232,6 @@ namespace SpawnDev.NexStar
         }
 
         /// <inheritdoc/>
-        public override string ToString() => $"{LocalTime:yyyy-MM-dd HH:mm:ss} (UTC{TimezoneOffset:+0;-0;+0}{(DaylightSaving ? " DST" : "")})";
+        public override string ToString() => $"{LocalTime:yyyy-MM-dd HH:mm:ss} (standard UTC{TimezoneOffset:+0;-0;+0}{(DaylightSaving ? " + DST" : "")})";
     }
 }

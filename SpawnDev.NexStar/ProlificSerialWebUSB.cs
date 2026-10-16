@@ -14,10 +14,6 @@ public class ProlificSerialWebUSB : ProlificSerial
     private bool ComsEnabled = false;
     private CancellationTokenSource? _cancelComsTokenSource;
     private Task? _readingTask;
-    private readonly List<byte> _responseBuffer = new();
-    private TaskCompletionSource<byte[]>? _pendingResponse;
-    private readonly SemaphoreSlim _commandLimiter = new(1, 1);
-    private readonly object _bufferLock = new();
 
     /// <summary>Timeout for post-open connection verification (echo test).</summary>
     private const int VerifyTimeoutMs = 2500;
@@ -173,7 +169,7 @@ public class ProlificSerialWebUSB : ProlificSerial
             for (int i = 0; i < 3; i++)
             {
                 response = await SendCommandAsync(echoCmd, VerifyTimeoutMs);
-                if (response != null && response.Length >= 2) break;
+                if (response != null && response.Length == 1) break;
                 await Task.Delay(250);
             }
         }
@@ -183,25 +179,14 @@ public class ProlificSerialWebUSB : ProlificSerial
             return false;
         }
 
-        if (response == null || response.Length < 2)
+        if (response == null || response.Length != 1)
         {
-            JS.Log("ProlificSerialWebUSB VerifyConnection: no response or too short.",
+            JS.Log("ProlificSerialWebUSB VerifyConnection: no usable echo response.",
                 response == null ? "null" : response.Length.ToString());
             return false;
         }
 
-        int lastHash = -1;
-        for (int i = 0; i < response.Length; i++)
-        {
-            if (response[i] == (byte)'#') { lastHash = i; break; }
-        }
-        if (lastHash < 0)
-        {
-            JS.Log("ProlificSerialWebUSB VerifyConnection: response did not end with #.");
-            return false;
-        }
-
-        // Echo returns the character we sent ('A') then '#'.
+        // The echo payload is the character we sent ('A').
         if (response[0] != (byte)'A')
         {
             JS.Log("ProlificSerialWebUSB VerifyConnection: echo character mismatch.",
@@ -389,17 +374,7 @@ public class ProlificSerialWebUSB : ProlificSerial
                 }
 
                 DataReceived(data);
-                lock (_bufferLock)
-                {
-                    _responseBuffer.AddRange(data);
-                    int terminatorIndex = _responseBuffer.IndexOf((byte)'#');
-                    if (terminatorIndex >= 0 && _pendingResponse != null)
-                    {
-                        var response = _responseBuffer.Take(terminatorIndex + 1).ToArray();
-                        _responseBuffer.RemoveRange(0, terminatorIndex + 1);
-                        _pendingResponse.TrySetResult(response);
-                    }
-                }
+                Channel.OnBytes(data);
             }
             catch (OperationCanceledException)
             {
@@ -492,7 +467,7 @@ public class ProlificSerialWebUSB : ProlificSerial
     }
 
     /// <summary>
-    /// Sends a command and waits for response terminated by '#'.
+    /// Sends a command and returns its payload (see <see cref="INexStarTransport.SendCommandAsync"/>).
     /// </summary>
     public override async Task<byte[]?> SendCommandAsync(byte[] command, int timeoutMs = CommandTimeoutMs)
     {
@@ -515,36 +490,13 @@ public class ProlificSerialWebUSB : ProlificSerial
             return null;
         }
 
-        var haveLock = false;
         try
         {
-            await _commandLimiter.WaitAsync();
-            haveLock = true;
-
-            if (_device == null || !_device.Opened)
+            return await Channel.ExchangeAsync(command, async bytes =>
             {
-                MarkDisconnected();
-                return null;
-            }
-
-            lock (_bufferLock)
-            {
-                _responseBuffer.Clear();
-                _pendingResponse = new TaskCompletionSource<byte[]>();
-            }
-
-            await WriteBytesAsync(command);
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            cts.Token.Register(() => _pendingResponse?.TrySetCanceled());
-
-            var result = await _pendingResponse.Task;
-            return result;
-        }
-        catch (OperationCanceledException)
-        {
-            JS.Log("ProlificSerialWebUSB SendCommand: timeout or canceled.");
-            return null;
+                if (_device == null || !_device.Opened) throw new InvalidOperationException("Device not open");
+                await WriteBytesAsync(bytes);
+            }, timeoutMs);
         }
         catch (Exception ex)
         {
@@ -552,15 +504,6 @@ public class ProlificSerialWebUSB : ProlificSerial
             if (_device == null || !_device.Opened)
                 MarkDisconnected();
             return null;
-        }
-        finally
-        {
-            lock (_bufferLock)
-            {
-                _pendingResponse = null;
-            }
-            if (haveLock)
-                _commandLimiter.Release();
         }
     }
 
@@ -570,15 +513,5 @@ public class ProlificSerialWebUSB : ProlificSerial
         ComsEnabled = false;
         StatusChanged();
         DisconnectedEvent();
-    }
-
-    /// <summary>
-    /// Sends a string command and returns string response.
-    /// </summary>
-    public override async Task<string?> SendStringCommandAsync(string data, int timeoutMs = CommandTimeoutMs)
-    {
-        var response = await SendCommandAsync(Encoding.ASCII.GetBytes(data), timeoutMs);
-        if (response == null) return null;
-        return Encoding.ASCII.GetString(response).TrimEnd('#');
     }
 }

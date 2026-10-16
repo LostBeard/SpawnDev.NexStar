@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<IsPackable>false</IsPackable>
+		<NoWarn>$(NoWarn);CA1416</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SpawnDev.NexStar\SpawnDev.NexStar.csproj" />
+		<ProjectReference Include="..\SpawnDev.NexStar.Desktop\SpawnDev.NexStar.Desktop.csproj" />
+		<PackageReference Include="SpawnDev.UnitTesting.Browser" Version="2.7.0" />
+	</ItemGroup>
+
+</Project>

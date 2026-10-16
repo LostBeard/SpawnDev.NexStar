@@ -13,8 +13,6 @@ public class ProlificSerialWebSerial : ProlificSerial
     private CancellationTokenSource? CancelComsTokenSource = null;
     private readonly SerialPort _port;
     private bool ComsEnabled = false;
-    private List<byte> _responseBuffer = new();
-    private TaskCompletionSource<byte[]>? _pendingResponse = null;
     private WritableStreamDefaultWriter? Writer = null;
     private Task? ReadingTask = null;
 
@@ -110,58 +108,25 @@ public class ProlificSerialWebSerial : ProlificSerial
         DisconnectedEvent();
     }
 
-    SemaphoreSlim _commandLimiter = new SemaphoreSlim(1, 1);
-
     /// <summary>
-    /// Sends a command and waits for response terminated by '#'
+    /// Sends a command and returns its payload (see <see cref="INexStarTransport.SendCommandAsync"/>)
     /// </summary>
     public override async Task<byte[]?> SendCommandAsync(byte[] command, int timeoutMs = CommandTimeoutMs)
     {
         if (Writer == null || !ComsEnabled) return null;
-        var haveLock = false;
         try
         {
-            await _commandLimiter.WaitAsync();
-            haveLock = true;
-
-            _responseBuffer.Clear();
-            _pendingResponse = new TaskCompletionSource<byte[]>();
-
-            await Writer.Ready;
-            await Writer.Write(command);
-
-            using var cts = new CancellationTokenSource(timeoutMs);
-            cts.Token.Register(() => _pendingResponse?.TrySetCanceled());
-
-            return await _pendingResponse.Task;
-        }
-        catch (OperationCanceledException)
-        {
-            return null;
+            return await Channel.ExchangeAsync(command, async bytes =>
+            {
+                await Writer.Ready;
+                await Writer.Write(bytes);
+            }, timeoutMs);
         }
         catch (Exception ex)
         {
             JS.Log($"SendCommand error: {ex.Message}");
             return null;
         }
-        finally
-        {
-            _pendingResponse = null;
-            if (haveLock)
-            {
-                _commandLimiter?.Release();
-            }
-        }
-    }
-
-    /// <summary>
-    /// Sends a string command and returns string response
-    /// </summary>
-    public override async Task<string?> SendStringCommandAsync(string command, int timeoutMs = CommandTimeoutMs)
-    {
-        var response = await SendCommandAsync(Encoding.ASCII.GetBytes(command), timeoutMs);
-        if (response == null) return null;
-        return Encoding.ASCII.GetString(response).TrimEnd('#');
     }
 
     /// <summary>
@@ -187,17 +152,7 @@ public class ProlificSerialWebSerial : ProlificSerial
                     {
                         var bytes = value.ToArray();
                         DataReceived(bytes);
-
-                        _responseBuffer.AddRange(bytes);
-
-                        // Check for terminator
-                        int terminatorIndex = _responseBuffer.IndexOf((byte)'#');
-                        if (terminatorIndex >= 0 && _pendingResponse != null)
-                        {
-                            var response = _responseBuffer.Take(terminatorIndex + 1).ToArray();
-                            _responseBuffer.RemoveRange(0, terminatorIndex + 1);
-                            _pendingResponse.TrySetResult(response);
-                        }
+                        Channel.OnBytes(bytes);
                     }
                 }
                 reader.ReleaseLock();
