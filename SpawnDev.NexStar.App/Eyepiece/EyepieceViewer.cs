@@ -38,8 +38,21 @@ public sealed class EyepieceViewer : IAsyncDisposable
     /// <summary>The phone's picture (null until its first frame).</summary>
     public VideoSurface? Video => _video;
 
-    /// <summary>The phone's camera pose from its latest orientation (magnetic azimuth: a compass reads magnetic north).</summary>
-    public CameraPose? Pose => Orientation is { } o ? CameraPose.FromDeviceOrientation(o.Alpha, o.Beta, o.Gamma) : null;
+    /// <summary>The magnetic declination at the site (east positive), once the site is known: what turns the phone's compass bearing into a true one.</summary>
+    public double? Declination { get; set; }
+
+    /// <summary>The phone's camera pose from its latest orientation, with the compass azimuth as the phone gives it (against magnetic north).</summary>
+    public CameraPose? MagneticPose => Orientation is { } o ? CameraPose.FromDeviceOrientation(o.Alpha, o.Beta, o.Gamma) : null;
+
+    /// <summary>True when <see cref="Pose"/> is against true north: the phone has a compass and the site's declination is known.</summary>
+    public bool PoseIsTrue => Declination != null && Orientation is { Absolute: true };
+
+    /// <summary>The camera pose with the azimuth against true north when that can be had, else as the phone reports it.</summary>
+    public CameraPose? Pose => MagneticPose is { } p ? (Declination is double d && Orientation is { Absolute: true } ? p.WithDeclination(d) : p) : null;
+
+    /// <summary>The phone's pointing for the chart, only while its readings are fresh and its azimuth is against true north.</summary>
+    public (double Azimuth, double Altitude)? ChartPointing =>
+        PoseIsTrue && Pose is { } p && (DateTime.UtcNow - OrientationAtUtc).TotalSeconds < 2 ? (p.Azimuth, p.Altitude) : null;
 
     public EyepieceViewer(GPUDevice device, GPUQueue queue, PairingStore store, string origin)
     {

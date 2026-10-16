@@ -37,7 +37,7 @@ public static class PairDemo
         var viewer = await context.NewPageAsync();
         viewer.Console += (_, m) => { if (!m.Text.Contains("Geolocation")) Console.WriteLine($"[viewer.{m.Type}] {m.Text}"); };
         viewer.PageError += (_, e) => Console.WriteLine($"[viewer.pageerror] {e}");
-        await viewer.GotoAsync($"{baseUrl}/workspace?sim=1", new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 120000 });
+        await viewer.GotoAsync($"{baseUrl}/workspace?sim=1&lat=40.7484&lon=-73.9857", new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle, Timeout = 120000 });
         await viewer.WaitForTimeoutAsync(6000);
 
         // open the Eyepiece panel and press "Pair a phone"

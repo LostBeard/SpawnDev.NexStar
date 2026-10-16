@@ -136,7 +136,8 @@ public sealed class EyepiecePanel
             if (viewer?.Pose is { } pose)
             {
                 var age = viewer.Orientation != null ? (DateTime.UtcNow - viewer.OrientationAtUtc).TotalSeconds : 99;
-                _pose.Text = age > 3 ? "Phone orientation: no data" : $"Camera  Az {pose.Azimuth:F1}   Alt {pose.Altitude:F1}   Roll {pose.Roll:F1}";
+                var north = viewer.Orientation is { Absolute: false } ? "no compass" : viewer.PoseIsTrue ? "true" : "magnetic";
+                _pose.Text = age > 3 ? "Phone orientation: no data" : $"Camera  Az {pose.Azimuth:F1} ({north})   Alt {pose.Altitude:F1}   Roll {pose.Roll:F1}";
             }
             else
             {

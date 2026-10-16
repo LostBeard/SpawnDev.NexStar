@@ -31,6 +31,9 @@ public sealed class SkyOverlay : UIElement
     /// <summary>Where the telescope points, true azimuth and altitude (null when unknown or the frame is not set up).</summary>
     public (double Azimuth, double Altitude)? TelescopePointing { get; set; }
 
+    /// <summary>Where the eyepiece phone's camera points by its compass and tilt (true azimuth), a cross-check on the mount.</summary>
+    public (double Azimuth, double Altitude)? PhonePointing { get; set; }
+
     /// <summary>The picked object, ringed on the chart.</summary>
     public SkyObject? Selected { get; set; }
 
@@ -58,6 +61,7 @@ public sealed class SkyOverlay : UIElement
         if (ShowSolarSystem) DrawSolarSystem(renderer);
         DrawSelected(renderer);
         DrawTelescope(renderer);
+        DrawPhone(renderer);
         base.Draw(renderer);
     }
 
@@ -197,6 +201,21 @@ public sealed class SkyOverlay : UIElement
         r.DrawRect(fx + radius + 2, fy - 1, 7, 2, color);
         r.DrawRect(fx - 1, fy - radius - 9, 2, 7, color);
         r.DrawRect(fx - 1, fy + radius + 2, 2, 7, color);
+    }
+
+    /// <summary>A diamond: the phone's idea of where it points, from its own sensors.</summary>
+    private void DrawPhone(UIRenderer r)
+    {
+        if (PhonePointing is not { } p || !_view.TryProject(SkyView.FromAzAlt(p.Azimuth, p.Altitude), out var x, out var y) || !OnScreen(x, y, 40)) return;
+        var color = Tone(120, 200, 255, 240);
+        float fx = (float)x, fy = (float)y;
+        for (int i = -9; i <= 9; i++)
+        {
+            int w = 9 - Math.Abs(i);
+            r.DrawRect(fx - w, fy + i, 1.6f, 1.6f, color);
+            r.DrawRect(fx + w, fy + i, 1.6f, 1.6f, color);
+        }
+        r.DrawText("phone", fx + 14, fy - 7, 13f, color);
     }
 
     private void Marker(UIRenderer r, AzAltCoordinates aa, string name, Color color, float radius)

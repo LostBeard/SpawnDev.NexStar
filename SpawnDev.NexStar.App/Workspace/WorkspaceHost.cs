@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Components;
 using SpawnDev.GameUI;
 using SpawnDev.NexStar.App.Eyepiece;
+using SpawnDev.NexStar.Eyepiece;
 using SpawnDev.NexStar.App.Services;
 using SpawnDev.NexStar.Sky;
 using SkyObject = SpawnDev.NexStar.Sky.SkyObject;
@@ -395,6 +396,9 @@ public sealed class WorkspaceHost : IDisposable
             {
                 _sinceSolar = 0;
                 _solar = SkyPicker.SolarSystem(_sky);
+                // the compass of the phone reads magnetic north: the model turns it into true north for this site
+                if (_eyepiece != null && (_siteFixed || _location.Location != null))
+                    _eyepiece.Declination = WorldMagneticModel.Default.Declination(_sky.Latitude, _sky.Longitude, 0, DateTime.UtcNow);
                 _hud.View.ShowSite(_location.Location is { } siteHere
                     ? $"Site {siteHere.Latitude:F3}, {siteHere.Longitude:F3} ({(_location.IsBrowserLocation ? "this device" : "telescope")})"
                     : "Site unknown: using a default");
@@ -402,6 +406,7 @@ public sealed class WorkspaceHost : IDisposable
             }
             if (_scope?.PadHeld != null) _scope.Heartbeat();
             _overlay!.Selected = _selected;
+            _overlay.PhonePointing = _eyepiece?.ChartPointing;
             _overlay.TelescopePointing = _scope?.HasFrame == true ? _scope.TruePointing() : null;
             _hud.Card.Show(_selected, _mount.ComsEnabled, _mount.IsAligned, _cardNote);
             _eyepiece?.Update();
