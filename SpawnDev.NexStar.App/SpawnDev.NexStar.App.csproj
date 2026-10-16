@@ -20,6 +20,7 @@
 		<ProjectReference Include="..\SpawnDev.NexStar\SpawnDev.NexStar.csproj" />
 		<ProjectReference Include="..\SpawnDev.NexStar.Sky\SpawnDev.NexStar.Sky.csproj" />
 		<ProjectReference Include="..\SpawnDev.NexStar.Simulator\SpawnDev.NexStar.Simulator.csproj" />
+		<ProjectReference Include="..\SpawnDev.NexStar.Eyepiece\SpawnDev.NexStar.Eyepiece.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

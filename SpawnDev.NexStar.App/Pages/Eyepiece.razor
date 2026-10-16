@@ -1,0 +1,159 @@
+@page "/eyepiece"
+@layout SpawnDev.NexStar.App.Workspace.EmptyLayout
+@using SpawnDev.SpawnJS
+@using SpawnDev.SpawnJS.JSObjects
+@using SpawnDev.NexStar.Eyepiece
+@using SpawnDev.NexStar.App.Eyepiece
+@implements IAsyncDisposable
+@inject SpawnJSRuntime JS
+@inject NavigationManager Navigation
+
+<PageTitle>NexStar Eyepiece</PageTitle>
+<HeadContent>
+    <link rel="stylesheet" href="css/eyepiece.css" />
+</HeadContent>
+
+<main class="eyepiece">
+    <h1>NexStar Eyepiece</h1>
+    <p class="status">@_status</p>
+    <video @ref="_videoRef" class="preview" muted playsinline autoplay></video>
+    @if (_poseText != null)
+    {
+        <p class="pose">@_poseText</p>
+    }
+    @if (_cameraText.Length > 0)
+    {
+        <p class="small">@_cameraText</p>
+    }
+    <div class="buttons">
+        @if (!_running)
+        {
+            <button @onclick="StartAsync" disabled="@(_pairing == null)">Start</button>
+        }
+        else
+        {
+            <button @onclick="StopAsync">Stop</button>
+        }
+        @if (_pairing != null)
+        {
+            <button class="quiet" @onclick="ForgetAsync">Forget pairing</button>
+        }
+    </div>
+    <p class="small">Put the phone on the eyepiece with the camera over the lens. Keep this page open: it keeps the screen awake.</p>
+</main>
+
+@code {
+    private const string PairingKey = "nexstar.eyepiece.phone.pairing";
+    private const string AutoStartKey = "nexstar.eyepiece.phone.autostart";
+
+    private ElementReference _videoRef;
+    private EyepiecePhone? _phone;
+    private PairingInfo? _pairing;
+    private PairingStore? _store;
+    private Storage? _storage;
+    private bool _running;
+    private string _status = "Looking for the pairing...";
+    private string? _poseText;
+    private string _cameraText = "";
+    private System.Threading.Timer? _refresh;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { _storage = new Window().LocalStorage; } catch { }
+        _store = new PairingStore(_storage, PairingKey);
+
+        // a pairing link carries the pairing after the #: take it, keep it, and the next visit needs no link
+        if (PairingInfo.TryParseLink(Navigation.Uri, out var fromLink) && fromLink != null)
+        {
+            _pairing = fromLink;
+            _store.Save(fromLink);
+        }
+        else
+        {
+            _pairing = _store.Load();
+        }
+
+        if (_pairing == null)
+        {
+            _status = "Not paired. On the controlling NexStar screen open Eyepiece, press Pair a phone, and scan the code with this phone's camera.";
+        }
+        else
+        {
+            _status = "Paired. Press Start.";
+            if (ReadStored(AutoStartKey) == "1") await StartAsync();
+        }
+        StateHasChanged();
+    }
+
+    private string? ReadStored(string key)
+    {
+        try { return _storage?.GetItem(key); } catch { return null; }
+    }
+
+    private async Task StartAsync()
+    {
+        if (_pairing == null || _running) return;
+        _status = "Starting the camera...";
+        StateHasChanged();
+        _phone = new EyepiecePhone(JS);
+        _phone.Changed += () => InvokeAsync(Update);
+        var preview = _videoRef.As<HTMLVideoElement>();
+        var problem = await _phone.StartAsync(_pairing, preview);
+        if (problem != null)
+        {
+            _status = problem;
+            await _phone.DisposeAsync();
+            _phone = null;
+            StateHasChanged();
+            return;
+        }
+        _running = true;
+        try { _storage?.SetItem(AutoStartKey, "1"); } catch { }
+        Update();
+        _refresh = new System.Threading.Timer(_ => InvokeAsync(Update), null, 1000, 1000);
+    }
+
+    private void Update()
+    {
+        if (_phone == null) return;
+        _status = _phone.State switch
+        {
+            EyepieceLinkState.Open => "Linked: " + (_phone.Detail ?? "streaming"),
+            EyepieceLinkState.Connecting => "Checking the other device...",
+            EyepieceLinkState.Waiting => "Waiting for the controlling screen" + (string.IsNullOrEmpty(_phone.Detail) ? "" : ": " + _phone.Detail),
+            _ => "Stopped",
+        };
+        _cameraText = _phone.CameraText;
+        _poseText = _phone.Pose is { } p
+            ? $"Camera points Az {p.Azimuth:F0}  Alt {p.Altitude:F0}  Roll {p.Roll:F0}" + (_phone.CompassAbsolute ? " (compass)" : " (no compass: relative)")
+            : "Sensors: waiting for a reading";
+        StateHasChanged();
+    }
+
+    private async Task StopAsync()
+    {
+        _refresh?.Dispose();
+        _refresh = null;
+        if (_phone != null) { await _phone.DisposeAsync(); _phone = null; }
+        _running = false;
+        try { _storage?.SetItem(AutoStartKey, "0"); } catch { }
+        _status = "Stopped. Press Start.";
+        _poseText = null;
+        _cameraText = "";
+    }
+
+    private async Task ForgetAsync()
+    {
+        await StopAsync();
+        _store?.Clear();
+        _pairing = null;
+        _status = "Pairing forgotten.";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _refresh?.Dispose();
+        if (_phone != null) { await _phone.DisposeAsync(); _phone = null; }
+    }
+}

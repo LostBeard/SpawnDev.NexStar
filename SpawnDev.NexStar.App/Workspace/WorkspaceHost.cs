@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components;
 using SpawnDev.GameUI;
+using SpawnDev.NexStar.App.Eyepiece;
 using SpawnDev.NexStar.App.Services;
 using SpawnDev.NexStar.Sky;
 using SkyObject = SpawnDev.NexStar.Sky.SkyObject;
@@ -43,6 +44,7 @@ public sealed class WorkspaceHost : IDisposable
     private bool _gotoBusy;
     private Storage? _storage;
     private bool _demo;
+    private EyepieceViewer? _eyepiece;
     private ViewSettings _settings = new();
     private TimeSpan _timeShift;
     private const string ViewKey = "nexstar.view";
@@ -171,6 +173,12 @@ public sealed class WorkspaceHost : IDisposable
         _window!.AddEventListener("blur", _releaseCallback);
         _window.AddEventListener("pagehide", _releaseCallback);
 
+        _eyepiece = new EyepieceViewer(_device!, _queue!, new PairingStore(_storage, "nexstar.eyepiece.pairing"), _window!.Location.Origin);
+        hud.Eyepiece.PairClicked += () => _ = _eyepiece.PairAsync();
+        hud.Eyepiece.UnpairClicked += () => _ = _eyepiece.UnpairAsync();
+        hud.Eyepiece.CopyLinkClicked += () => _ = CopyLinkAsync();
+        _ = _eyepiece.StartSavedAsync();
+
         _runCts = new CancellationTokenSource();
         _ = _scope.RunAsync(_runCts.Token);
 
@@ -184,6 +192,21 @@ public sealed class WorkspaceHost : IDisposable
         _hud!.Demo = true;
         var simulator = new SpawnDev.NexStar.Simulation.SimulatedMount(scale: 1, startAzimuth: 20, startAltitude: 30);
         if (!await _mount.AttachTransportAsync(simulator)) Console.WriteLine("[Workspace] the simulated telescope did not connect");
+    }
+
+    private async Task CopyLinkAsync()
+    {
+        if (_eyepiece?.Link is not { } link) return;
+        try
+        {
+            using var navigator = _js.Get<Navigator>("navigator");
+            await navigator.Clipboard.WriteText(link);
+            _scope?.SetMessage("The pairing link was copied.");
+        }
+        catch (Exception ex)
+        {
+            _scope?.SetMessage("Could not copy: " + ex.Message);
+        }
     }
 
     private string? ReadStored(string key)
@@ -381,7 +404,9 @@ public sealed class WorkspaceHost : IDisposable
             _overlay!.Selected = _selected;
             _overlay.TelescopePointing = _scope?.HasFrame == true ? _scope.TruePointing() : null;
             _hud.Card.Show(_selected, _mount.ComsEnabled, _mount.IsAligned, _cardNote);
-            _hud.Refresh(dt, _sky, _location.Location != null, BuildDockState());
+            _eyepiece?.Update();
+            _hud.Eyepiece.UpdateVideo(_eyepiece);
+            _hud.Refresh(dt, _sky, _location.Location != null, BuildDockState(), _eyepiece);
 
             using var texture = _context.GetCurrentTexture();
             using var view = texture.CreateView();
@@ -412,6 +437,7 @@ public sealed class WorkspaceHost : IDisposable
         _runCts?.Cancel();
         _runCts?.Dispose();
         _runCts = null;
+        if (_eyepiece != null) { _ = _eyepiece.DisposeAsync(); _eyepiece = null; }
         _mount.Cable.StateChanged -= SaveCable;
         if (_scope != null) _ = _scope.StopAsync();
         if (_releaseCallback != null && _window != null)

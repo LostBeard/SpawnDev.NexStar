@@ -1,0 +1,48 @@
+/* The phone's Eyepiece page: red on black, big touch targets, nothing else. */
+body { background: #000; }
+
+.eyepiece {
+    box-sizing: border-box;
+    min-height: 100vh;
+    padding: 16px;
+    background: #000;
+    color: #ff6a6a;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.eyepiece h1 {
+    margin: 0 0 8px;
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: #ff6a6a;
+}
+
+.eyepiece .status { margin: 0 0 12px; font-size: 1.05rem; }
+.eyepiece .pose { margin: 8px 0; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.eyepiece .small { margin: 8px 0; font-size: 0.85rem; color: #c04545; }
+
+.eyepiece .preview {
+    display: block;
+    width: 100%;
+    max-height: 42vh;
+    object-fit: contain;
+    background: #100000;
+    border: 1px solid #5a1212;
+    border-radius: 6px;
+}
+
+.eyepiece .buttons { display: flex; gap: 12px; margin: 14px 0; flex-wrap: wrap; }
+
+.eyepiece button {
+    min-height: 52px;
+    min-width: 140px;
+    padding: 0 20px;
+    font-size: 1.1rem;
+    color: #ff7070;
+    background: #360606;
+    border: 1px solid #aa1e1e;
+    border-radius: 6px;
+}
+
+.eyepiece button:disabled { opacity: 0.45; }
+.eyepiece button.quiet { background: #1a0303; border-color: #5a1212; color: #c04545; }

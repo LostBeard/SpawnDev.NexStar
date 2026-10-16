@@ -28,6 +28,7 @@ public sealed class WorkspaceUi
     private readonly UIButton _disconnect = new() { Text = "Disconnect", Width = 104, Height = 30 };
     private readonly UIButton _dockToggle = new() { Text = "Telescope", Width = TelescopeDock.Width, Height = 30 };
     private readonly UIButton _viewToggle = new() { Text = "View", Width = ViewPanel.Width, Height = 30 };
+    private readonly UIButton _eyepieceToggle = new() { Text = "Eyepiece", Width = 118, Height = 30 };
     private double _sinceRefresh = 1;
     private int _width, _height;
     private bool _dockOpen = true;
@@ -40,6 +41,7 @@ public sealed class WorkspaceUi
     public SelectionCard Card { get; } = new();
     public ViewPanel View { get; } = new();
     public TimeBar Time { get; } = new();
+    public EyepiecePanel Eyepiece { get; } = new();
 
     /// <summary>The telescope is a simulation: say so everywhere it is named.</summary>
     public bool Demo { get; set; }
@@ -61,6 +63,8 @@ public sealed class WorkspaceUi
         _root.AddAnchored(_viewToggle, Anchor.TopLeft, offsetX: 12, offsetY: BarHeight + 10);
         _root.AddAnchored(View.Root, Anchor.TopLeft, offsetX: 12, offsetY: BarHeight + 46);
         _root.AddAnchored(Time.Root, Anchor.BottomCenter, offsetX: 0, offsetY: -10);
+        _root.AddAnchored(_eyepieceToggle, Anchor.TopLeft, offsetX: 12 + ViewPanel.Width + 8, offsetY: BarHeight + 10);
+        _root.AddAnchored(Eyepiece.Root, Anchor.TopLeft, offsetX: 12 + ViewPanel.Width + 8, offsetY: BarHeight + 46);
         _root.AddAnchored(Dock.Root, Anchor.TopRight, offsetX: -12, offsetY: BarHeight + 46);
         _topBar.AddChild(_title);
         _topBar.AddChild(_connection);
@@ -76,6 +80,7 @@ public sealed class WorkspaceUi
         _disconnect.OnClick = () => DisconnectRequested?.Invoke();
         _dockToggle.OnClick = () => { _dockOpen = !_dockOpen; _dockChosen = true; ApplyDock(); };
         _viewToggle.OnClick = () => { View.Show(!View.IsOpen); _viewToggle.Text = View.IsOpen ? "Hide view" : "View"; };
+        _eyepieceToggle.OnClick = () => { Eyepiece.Show(!Eyepiece.IsOpen); _eyepieceToggle.Text = Eyepiece.IsOpen ? "Hide" : "Eyepiece"; };
     }
 
     private void ApplyDock()
@@ -112,7 +117,7 @@ public sealed class WorkspaceUi
     }
 
     /// <summary>Per-frame: updates the readouts a few times a second.</summary>
-    public void Refresh(float dt, SpawnDev.NexStar.Sky.SkyView sky, bool locationKnown, DockState dock)
+    public void Refresh(float dt, SpawnDev.NexStar.Sky.SkyView sky, bool locationKnown, DockState dock, SpawnDev.NexStar.App.Eyepiece.EyepieceViewer? eyepiece)
     {
         _sinceRefresh += dt;
         if (_sinceRefresh < 0.25) return;
@@ -146,5 +151,6 @@ public sealed class WorkspaceUi
             + (locationKnown ? "" : "   (location not known: using a default)");
 
         Dock.Refresh(dock);
+        Eyepiece.Refresh(eyepiece);
     }
 }
