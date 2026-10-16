@@ -11,6 +11,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\SpawnDev.NexStar.Sky\SpawnDev.NexStar.Sky.csproj" />
+		<ProjectReference Include="..\SpawnDev.NexStar.Eyepiece\SpawnDev.NexStar.Eyepiece.csproj" />
 		<PackageReference Include="SpawnDev.UnitTesting.Browser" Version="2.7.0" />
 	</ItemGroup>
 

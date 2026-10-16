@@ -182,13 +182,16 @@ namespace PlaywrightMultiTest
                                     "--no-sandbox",
                                     // Auto-grant file system write permission (no prompt)
                                     "--disable-features=FileSystemAccessPermissionPrompt",
-                                    "--allow-file-access-from-files"
+                                    "--allow-file-access-from-files",
+                                    // a fake camera for tests that need one (the eyepiece link), with no permission prompt
+                                    "--use-fake-device-for-media-stream",
+                                    "--use-fake-ui-for-media-stream"
                                 }
                             }).ConfigureAwait(false);
                         testableProject.Browser = testableProject.BrowserContext.Browser;
                         // Grant all available permissions to avoid prompts
                         await testableProject.BrowserContext.GrantPermissionsAsync(
-                            new[] { "clipboard-read", "clipboard-write" }).ConfigureAwait(false);
+                            new[] { "clipboard-read", "clipboard-write", "camera" }).ConfigureAwait(false);
                         // new page
                         testableProject.Page = await testableProject.BrowserContext.NewPageAsync().ConfigureAwait(false);
 

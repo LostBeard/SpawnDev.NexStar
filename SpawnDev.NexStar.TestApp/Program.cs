@@ -10,6 +10,7 @@ SpawnJSRuntime.EnableIDisposableWatcher = true;
 
 // the test classes PMT discovers
 builder.Services.AddSingleton<SkyRendererTests>();
+builder.Services.AddSingleton<EyepieceLinkTests>();
 
 builder.RootComponents.Add<SpawnDev.NexStar.TestApp.App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
