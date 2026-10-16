@@ -33,6 +33,7 @@ public sealed class WorkspaceUi
     private int _width, _height;
     private bool _dockOpen = true;
     private bool _dockChosen;
+    private bool _narrow;
 
     /// <summary>The element to register as the HUD screen.</summary>
     public UIElement Root => _root;
@@ -78,15 +79,22 @@ public sealed class WorkspaceUi
         _serial.OnClick = () => ConnectRequested?.Invoke(false);
         _usb.OnClick = () => ConnectRequested?.Invoke(true);
         _disconnect.OnClick = () => DisconnectRequested?.Invoke();
-        _dockToggle.OnClick = () => { _dockOpen = !_dockOpen; _dockChosen = true; ApplyDock(); };
-        _viewToggle.OnClick = () => { View.Show(!View.IsOpen); _viewToggle.Text = View.IsOpen ? "Hide view" : "View"; };
-        _eyepieceToggle.OnClick = () => { Eyepiece.Show(!Eyepiece.IsOpen); _eyepieceToggle.Text = Eyepiece.IsOpen ? "Hide" : "Eyepiece"; };
+        _dockToggle.OnClick = () => { _dockOpen = !_dockOpen; _dockChosen = true; if (_narrow && _dockOpen) { View.Show(false); Eyepiece.Show(false); } ApplyDock(); ApplyToggles(); };
+        _viewToggle.OnClick = () => { var open = !View.IsOpen; View.Show(open); if (_narrow && open) { Eyepiece.Show(false); _dockOpen = false; _dockChosen = true; ApplyDock(); } ApplyToggles(); };
+        _eyepieceToggle.OnClick = () => { var open = !Eyepiece.IsOpen; Eyepiece.Show(open); if (_narrow && open) { View.Show(false); _dockOpen = false; _dockChosen = true; ApplyDock(); } ApplyToggles(); };
+    }
+
+    /// <summary>The toggle buttons say what pressing them does. On a narrow screen they are short, three to a row.</summary>
+    private void ApplyToggles()
+    {
+        _viewToggle.Text = View.IsOpen ? (_narrow ? "Close" : "Hide view") : "View";
+        _eyepieceToggle.Text = Eyepiece.IsOpen ? (_narrow ? "Close" : "Hide") : "Eyepiece";
+        _dockToggle.Text = _dockOpen ? (_narrow ? "Close" : "Hide telescope") : (_narrow ? "Scope" : "Telescope");
     }
 
     private void ApplyDock()
     {
         Dock.Root.Visible = _dockOpen;
-        _dockToggle.Text = _dockOpen ? "Hide telescope" : "Telescope";
         if (!_dockOpen) Dock.ReleaseAll();
     }
 
@@ -100,20 +108,65 @@ public sealed class WorkspaceUi
         _topBar.Width = width;
 
         var narrow = width < 760;
-        _title.X = 14; _title.Y = 12;
-        _connection.X = 124; _connection.Y = 14;
-        _position.X = narrow ? 14 : 360; _position.Y = narrow ? 30 : 14;
-        _cable.X = narrow ? 14 : 650; _cable.Y = 14;
-        _clock.Width = 150; _clock.X = width - 150 - 14; _clock.Y = 14;
-        _serial.Y = 8; _usb.Y = 8; _disconnect.Y = 8;
-        _serial.X = width - 150 - 14 - 96 - 8 - 118 - 8; _usb.X = _serial.X + 96 + 8;
-        _disconnect.X = _serial.X;
+        _narrow = narrow;
+        float barHeight;
+        if (narrow)
+        {
+            // three rows: the title and the clock; the connection and the cable; the position, or the connect buttons when there is none
+            barHeight = 92;
+            _title.X = 14; _title.Y = 8;
+            _clock.Width = 150; _clock.X = width - 150 - 14; _clock.Y = 12;
+            _connection.X = 14; _connection.Y = 38;
+            _cable.X = Math.Max(190, width - 190); _cable.Y = 38;
+            _position.X = 14; _position.Y = 64;
+            _serial.Y = 56; _usb.Y = 56; _disconnect.Y = 56;
+            _serial.X = 12; _usb.X = _serial.X + 96 + 8;
+            _disconnect.X = width - 104 - 12;
+        }
+        else
+        {
+            barHeight = BarHeight;
+            _title.X = 14; _title.Y = 12;
+            _connection.X = 124; _connection.Y = 14;
+            _position.X = 360; _position.Y = 14;
+            _cable.X = 650; _cable.Y = 14;
+            _clock.Width = 150; _clock.X = width - 150 - 14; _clock.Y = 14;
+            _serial.Y = 8; _usb.Y = 8; _disconnect.Y = 8;
+            _serial.X = width - 150 - 14 - 96 - 8 - 118 - 8; _usb.X = _serial.X + 96 + 8;
+            _disconnect.X = _serial.X;
+        }
+        _topBar.Height = barHeight;
 
-        _topBar.Height = narrow ? BarHeight + 18 : BarHeight;
+        // the toggles and the panels they open sit under the bar
+        if (narrow)
+        {
+            float w = (width - 24 - 12) / 3f;
+            _viewToggle.Width = _eyepieceToggle.Width = _dockToggle.Width = w;
+            _root.SetAnchor(_viewToggle, Anchor.TopLeft, 12, barHeight + 6);
+            _root.SetAnchor(_eyepieceToggle, Anchor.TopLeft, 12 + w + 6, barHeight + 6);
+            _root.SetAnchor(_dockToggle, Anchor.TopLeft, 12 + 2 * (w + 6), barHeight + 6);
+            _root.SetAnchor(View.Root, Anchor.TopLeft, 12, barHeight + 42);
+            _root.SetAnchor(Eyepiece.Root, Anchor.TopLeft, 12, barHeight + 42);
+            _root.SetAnchor(Dock.Root, Anchor.TopRight, -12, barHeight + 42);
+            _root.SetAnchor(_viewInfo, Anchor.BottomLeft, 14, -(TimeBar.Height + 18));
+        }
+        else
+        {
+            _viewToggle.Width = ViewPanel.Width; _eyepieceToggle.Width = 118; _dockToggle.Width = TelescopeDock.Width;
+            _root.SetAnchor(_viewToggle, Anchor.TopLeft, 12, barHeight + 10);
+            _root.SetAnchor(_eyepieceToggle, Anchor.TopLeft, 12 + ViewPanel.Width + 8, barHeight + 10);
+            _root.SetAnchor(_dockToggle, Anchor.TopRight, -12, barHeight + 10);
+            _root.SetAnchor(View.Root, Anchor.TopLeft, 12, barHeight + 46);
+            _root.SetAnchor(Eyepiece.Root, Anchor.TopLeft, 12 + ViewPanel.Width + 8, barHeight + 46);
+            _root.SetAnchor(Dock.Root, Anchor.TopRight, -12, barHeight + 46);
+            _root.SetAnchor(_viewInfo, Anchor.BottomLeft, 14, -12);
+        }
 
         // the dock opens by default only where it leaves room for the sky; a person's own choice sticks
         if (!_dockChosen) _dockOpen = width >= 900 && height >= TelescopeDock.Height + BarHeight + 60;
+        if (narrow && (View.IsOpen || Eyepiece.IsOpen)) _dockOpen = false;
         ApplyDock();
+        ApplyToggles();
     }
 
     /// <summary>Per-frame: updates the readouts a few times a second.</summary>

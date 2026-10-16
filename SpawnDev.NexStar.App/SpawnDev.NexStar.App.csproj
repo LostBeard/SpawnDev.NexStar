@@ -13,7 +13,7 @@
 		<PackageReference Include="SGP.NET" Version="1.4.0" />
 		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.4" />
 		<PackageReference Include="SpawnDev.SpawnJS.Blazor" Version="3.0.4" />
-		<PackageReference Include="SpawnDev.GameUI" Version="1.1.1-local.4" />
+		<PackageReference Include="SpawnDev.GameUI" Version="1.1.1-local.5" />
 	</ItemGroup>
 
 	<ItemGroup>
