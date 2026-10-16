@@ -132,7 +132,7 @@ public sealed class SkyData : IDisposable
         return padded;
     }
 
-    private static CatalogStar[] ReadPrefix(byte[] prefix, int count)
+    public static CatalogStar[] ReadPrefix(byte[] prefix, int count)
     {
         var stars = new CatalogStar[count];
         // the prefix is the header and the first records: read them with the same record layout
@@ -147,7 +147,7 @@ public sealed class SkyData : IDisposable
         return stars;
     }
 
-    private static Dictionary<uint, StarName> ParseStarNames(string json)
+    public static Dictionary<uint, StarName> ParseStarNames(string json)
     {
         var names = new Dictionary<uint, StarName>();
         using var doc = JsonDocument.Parse(json);
@@ -161,7 +161,7 @@ public sealed class SkyData : IDisposable
         return names;
     }
 
-    private static DeepSkyName[] ParseDeepSkyNames(string json)
+    public static DeepSkyName[] ParseDeepSkyNames(string json)
     {
         using var doc = JsonDocument.Parse(json);
         var list = new List<DeepSkyName>(13000);
@@ -176,7 +176,7 @@ public sealed class SkyData : IDisposable
         return list.ToArray();
     }
 
-    private static ConstellationInfo[] ParseConstellations(string json)
+    public static ConstellationInfo[] ParseConstellations(string json)
     {
         using var doc = JsonDocument.Parse(json);
         var list = new List<ConstellationInfo>(88);
