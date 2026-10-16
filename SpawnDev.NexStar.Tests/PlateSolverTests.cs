@@ -293,6 +293,28 @@ public class PlateSolverTests
         catch (OperationCanceledException) { }
     }
 
+    [TestMethod(Timeout = 900000)]
+    public void AnUnknownPlateScale_OverAWideRange_IsStillSolved_InReasonableTime()
+    {
+        // what the workspace does the first time: the scale of a phone through an eyepiece is not known, only that it lies between about 1 and 25 arcsec per pixel
+        var rng = new Random(606);
+        int solved = 0, tried = 6;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var times = new List<long>();
+        for (int i = 0; i < tried; i++)
+        {
+            var (det, ids, truth) = Render(rng, 200 + i * 20, 10 + i * 5, 30, 25.0, i % 2 == 1, 9.5f, 0.3, 0.1, 2);
+            var prior = PriorNear(rng, truth.Center, 6.0);
+            var cone = Cone(prior, 6.0 + 3.0, 9.5f);
+            var t0 = watch.ElapsedMilliseconds;
+            var s = PlateSolver.SolveSearch(det, cone, prior, 8.0, 640, 360, new PlateSolveOptions { MinArcsecPerPixel = 0.8, MaxArcsecPerPixel = 25 });
+            times.Add(watch.ElapsedMilliseconds - t0);
+            if (s != null) { CheckSolution(s, truth, 60, $"unknown-scale field {i}"); solved++; }
+        }
+        Console.WriteLine($"[PlateSolver] unknown scale: {solved}/{tried} solved, times ms: {string.Join(" ", times)}");
+        Check.That(solved >= tried - 1, $"only {solved} of {tried} were solved ({string.Join(" ", times)} ms)");
+    }
+
     [TestMethod]
     public void ThePoissonTail_IsRight()
     {

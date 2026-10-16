@@ -7,6 +7,7 @@
 // Example: shot http://localhost:8099/workspace?sim=1 shot.png --size 1280x800 --wait 5000 --click 1100,520 --sleep 500 --hold 1134,262,1500 --snap held.png
 using Microsoft.Playwright;
 
+if (args.Length >= 3 && args[0] == "solve") return await SolveDemo.RunAsync(args[1..]);
 if (args.Length >= 3 && args[0] == "pair") return await PairDemo.RunAsync(args[1..]);
 if (args.Length < 2) { Console.WriteLine("usage: shot <url> <out.png> [--size WxH] [--wait ms] [--touch] [--scale n] [--click x,y|--drag x0,y0,x1,y1|--wheel x,y,delta|--press Key|--hold x,y,ms|--sleep ms|--snap file]..."); return 1; }
 var url = args[0];

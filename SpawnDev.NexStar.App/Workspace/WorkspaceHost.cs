@@ -233,6 +233,7 @@ public sealed class WorkspaceHost : IDisposable
             var capturedUtc = DateTime.UtcNow;
             var capturedMount = _mount.CurrentAzAlt is { } m ? (m.Azimuth, m.Altitude) : ((double, double)?)null;
             var detections = await _detector.DetectAsync(video.View, w, h, 64);
+            Console.WriteLine($"[Solve] {detections.Count} detections in {w}x{h}: " + string.Join(" ", detections.Take(8).Select(d => $"({d.X:F1},{d.Y:F1},{d.Flux:F2})")));
             if (detections.Count < 5) { _hud.Eyepiece.SetSolveText($"Only {detections.Count} stars were found in the picture: it needs at least five. Is the telescope focused, and the exposure long enough?", false); return; }
 
             // the plate scale: what was solved last time (to within 15%), else anything a phone through an eyepiece could be
@@ -242,10 +243,15 @@ public sealed class WorkspaceHost : IDisposable
             var priorDirection = _sky.ToJ2000(SkyView.FromAzAlt(prior.Value.Az, prior.Value.Alt));
             float magnitudeLimit = options.MaxArcsecPerPixel > 12 ? 9.5f : 11.5f;
             var stars = await _cone.SearchAsync(_skyData.Stars, _skyData.StarCount, priorDirection, uncertainty + fieldRadius * 1.5 + 0.5, magnitudeLimit);
+            Console.WriteLine($"[Solve] prior Az {prior.Value.Az:F2} Alt {prior.Value.Alt:F2} ({priorName}), uncertainty {uncertainty:F1}, {stars.Count} catalog stars to mag {magnitudeLimit}, scale {options.MinArcsecPerPixel:F2}-{options.MaxArcsecPerPixel:F2}");
             if (stars.Count < 5) { _hud.Eyepiece.SetSolveText("The catalog has too few stars around there for this picture.", false); return; }
 
-            var progress = new Progress<(int Done, int Total)>(p => _hud.Eyepiece.SetSolveText($"Solving from {priorName}: patch {p.Done + 1} of {p.Total}, {detections.Count} stars in the picture...", false));
+            var progress = new DirectProgress<(int Done, int Total)>(p =>
+            {
+                if (p.Done < p.Total) _hud.Eyepiece.SetSolveText($"Solving from {priorName}: patch {p.Done + 1} of {p.Total}, {detections.Count} stars in the picture...", false);
+            });
             var solution = await PlateSolver.SolveSearchAsync(detections, stars, priorDirection, uncertainty, w, h, options, progress);
+            Console.WriteLine($"[Solve] result: {(solution == null ? "none" : $"RA {solution.RaDegrees:F4} Dec {solution.DecDegrees:F4} scale {solution.ArcsecPerPixel:F3} roll {solution.RollDegrees:F2} matches {solution.Matches}")}");
             if (solution == null)
             {
                 _hud.Eyepiece.SetSolveText($"No solution: {detections.Count} stars in the picture, {stars.Count} catalog stars near {priorName}. The catalog here is Hipparcos (to about magnitude 11): a narrow eyepiece field may hold too few catalog stars to solve.", false);
@@ -566,4 +572,12 @@ public sealed class WorkspaceHost : IDisposable
         _window?.Dispose();
         _window = null;
     }
+}
+
+/// <summary>Reports progress on the spot (Progress&lt;T&gt; posts to the synchronisation context, and a late report could overwrite the result that followed it).</summary>
+internal sealed class DirectProgress<T> : IProgress<T>
+{
+    private readonly Action<T> _handler;
+    public DirectProgress(Action<T> handler) => _handler = handler;
+    public void Report(T value) => _handler(value);
 }
