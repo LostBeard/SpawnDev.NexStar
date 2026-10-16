@@ -125,7 +125,7 @@ public class PlateSolverTests
         Check.That(s.RmsPixels < 1.5, $"{what}: rms {s.RmsPixels:F2} px");
     }
 
-    [TestMethod]
+    [TestMethod(Timeout = 600000)]
     public void AWideField_IsSolvedExactly_OverTheWholeSky_BothParities_AnyRoll()
     {
         var rng = new Random(2026);
@@ -142,7 +142,7 @@ public class PlateSolverTests
         Check.Equal(40, solved, "every field was solved");
     }
 
-    [TestMethod]
+    [TestMethod(Timeout = 600000)]
     public void ANarrowField_WithMissedAndFalseStars_IsSolved_WhenItHasEnoughStars_AndNeverSolvedWrong()
     {
         // 6 arcsec per pixel: a field about 2.1 x 1.2 degrees; Hipparcos to magnitude 11 has only a few stars there, so what is promised is: with seven or more real
@@ -169,7 +169,7 @@ public class PlateSolverTests
         Check.That(richSolved >= rich * 0.9, $"only {richSolved} of {rich} fields with seven or more real stars were solved");
     }
 
-    [TestMethod]
+    [TestMethod(Timeout = 600000)]
     public void APictureThatIsNotOfTheSky_IsNeverSolved()
     {
         var rng = new Random(5);
@@ -190,7 +190,7 @@ public class PlateSolverTests
         Check.That(coneStars / 60 > 50, $"the cones had stars (about {coneStars / 60} each): the test is not vacuous");
     }
 
-    [TestMethod]
+    [TestMethod(Timeout = 600000)]
     public void AMirroredPicture_IsRefused_NotSolvedWrong_WhenMirroringIsNotAllowed()
     {
         var rng = new Random(9);
@@ -244,7 +244,7 @@ public class PlateSolverTests
         Check.That(s.Pairs.Count >= Math.Min(det.Count, 64) * 0.85, $"most of the {Math.Min(det.Count, 64)} detections used matched ({s.Pairs.Count})");
     }
 
-    [TestMethod]
+    [TestMethod(Timeout = 600000)]
     public void ARandomPicture_AgainstADenseCatalog_AndAWideSearch_IsStillNeverSolved()
     {
         // the hard case for false matches: many catalog stars (Hipparcos to 11), many detections, an unsure plate scale and a wide search, so a very large number of
