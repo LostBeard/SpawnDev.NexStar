@@ -38,6 +38,8 @@ namespace SpawnDev.NexStar
         private readonly NexStarService _mount;
         private readonly object _gate = new();
         private PadDirection? _pad;
+        private int _padSequence;
+        private readonly SemaphoreSlim _padLock = new(1, 1);
         private DateTime _heartbeat = DateTime.MinValue;
         private DateTime _lastPoll = DateTime.MinValue;
         private CancellationTokenSource? _gotoCts;
@@ -64,6 +66,9 @@ namespace SpawnDev.NexStar
 
         /// <summary>The last thing the controller refused or failed at, for the UI to show.</summary>
         public string? Message { get; private set; }
+
+        /// <summary>Lets the host put its own notice where the controller's messages show.</summary>
+        public void SetMessage(string? message) => Message = message;
 
         /// <summary>True when the mount has an alignment of its own (so its azimuth and altitude are true), or one was set up here.</summary>
         public bool HasFrame => _mount.IsAligned || Pointing.IsSet;
@@ -144,37 +149,52 @@ namespace SpawnDev.NexStar
         public async Task<string?> BeginPadAsync(PadDirection direction, SlewRate rate)
         {
             if (!_mount.ComsEnabled) return Message = "not connected";
+            int id;
             lock (_gate)
             {
                 if (_pad != null) return "a pad button is already held";
                 _pad = direction;
+                id = ++_padSequence;
                 _heartbeat = DateTime.UtcNow;
             }
-            string? refusal = null;
-            switch (direction)
+            // starting and stopping take turns: a release that arrives while the slew is still being started waits for it, and then stops it
+            await _padLock.WaitAsync();
+            try
             {
-                case PadDirection.Left:
-                case PadDirection.Right:
+                lock (_gate)
                 {
-                    var start = await _mount.BeginAzimuthSlewAsync(direction == PadDirection.Right ? SlewDirection.Positive : SlewDirection.Negative, rate);
-                    if (!start.Started) refusal = start.Reason ?? "the slew did not start";
-                    break;
+                    if (_pad == null || _padSequence != id) return null;   // released before it ever started
                 }
-                default:
-                    if (!await _mount.SlewFixedAsync(SlewAxis.DecAlt, direction == PadDirection.Up ? SlewDirection.Positive : SlewDirection.Negative, rate))
-                        refusal = "the mount did not accept the slew";
-                    break;
+                string? refusal = null;
+                switch (direction)
+                {
+                    case PadDirection.Left:
+                    case PadDirection.Right:
+                    {
+                        var start = await _mount.BeginAzimuthSlewAsync(direction == PadDirection.Right ? SlewDirection.Positive : SlewDirection.Negative, rate);
+                        if (!start.Started) refusal = start.Reason ?? "the slew did not start";
+                        break;
+                    }
+                    default:
+                        if (!await _mount.SlewFixedAsync(SlewAxis.DecAlt, direction == PadDirection.Up ? SlewDirection.Positive : SlewDirection.Negative, rate))
+                            refusal = "the mount did not accept the slew";
+                        break;
+                }
+                if (refusal != null)
+                {
+                    lock (_gate) { if (_padSequence == id) _pad = null; }
+                    Message = refusal;
+                }
+                else
+                {
+                    Message = null;
+                }
+                return refusal;
             }
-            if (refusal != null)
+            finally
             {
-                lock (_gate) _pad = null;
-                Message = refusal;
+                _padLock.Release();
             }
-            else
-            {
-                Message = null;
-            }
-            return refusal;
         }
 
         /// <summary>The held button is still held.</summary>
@@ -186,8 +206,16 @@ namespace SpawnDev.NexStar
             PadDirection? held;
             lock (_gate) { held = _pad; _pad = null; }
             if (held == null) return;
-            if (held is PadDirection.Left or PadDirection.Right) await _mount.StopGuardedSlewAsync();
-            else await _mount.StopSlewAsync(SlewAxis.DecAlt);
+            await _padLock.WaitAsync();
+            try
+            {
+                if (held is PadDirection.Left or PadDirection.Right) await _mount.StopGuardedSlewAsync();
+                else await _mount.StopSlewAsync(SlewAxis.DecAlt);
+            }
+            finally
+            {
+                _padLock.Release();
+            }
         }
 
         /// <summary>

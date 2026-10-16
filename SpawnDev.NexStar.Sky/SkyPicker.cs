@@ -14,7 +14,8 @@ public enum SkyObjectKind { Star, DeepSky, Planet, Moon, Sun }
 /// <param name="Magnitude">Visual magnitude when known</param>
 /// <param name="Body">The planet, for <see cref="SkyObjectKind.Planet"/></param>
 /// <param name="CatalogNumber">Hipparcos number of a star, 0 otherwise</param>
-public sealed record SkyObject(SkyObjectKind Kind, string Name, string? Detail, double Azimuth, double Altitude, double? Magnitude, SolarSystemObject? Body = null, uint CatalogNumber = 0)
+/// <param name="J2000">The fixed position of a star or deep-sky object (null for the Moon, Sun and planets, which move)</param>
+public sealed record SkyObject(SkyObjectKind Kind, string Name, string? Detail, double Azimuth, double Altitude, double? Magnitude, SolarSystemObject? Body = null, uint CatalogNumber = 0, Vector3? J2000 = null)
 {
     /// <summary>The Sun must never be a target: pointing a telescope at it blinds and burns.</summary>
     public bool CanGoto => Kind != SkyObjectKind.Sun;
@@ -40,6 +41,22 @@ public static class SkyPicker
         var sun = SolarSystemMath.GetAzAlt(SolarSystemObject.Sun, lat, lon, utc);
         list.Add(new SkyObject(SkyObjectKind.Sun, "Sun", "Never point the telescope here", sun.Azimuth, sun.Altitude, -26.7, SolarSystemObject.Sun));
         return list;
+    }
+
+    /// <summary>
+    /// The same object where it is at the view's time: the sky turns, and the Moon and planets move, so a selection made a minute ago is not where it was.
+    /// <paramref name="solarSystem"/> is <see cref="SolarSystem"/> for the same view, passed in so a caller refreshing several objects computes it once.
+    /// </summary>
+    public static SkyObject Refresh(SkyObject o, SkyView view, IReadOnlyList<SkyObject> solarSystem)
+    {
+        if (o.J2000 is Vector3 fixedPosition)
+        {
+            var (az, alt) = SkyView.ToAzAlt(view.ToHorizontal(fixedPosition));
+            return o with { Azimuth = az, Altitude = alt };
+        }
+        foreach (var s in solarSystem)
+            if (s.Kind == o.Kind && s.Name == o.Name) return s;
+        return o;
     }
 
     /// <summary>The label for a deep-sky object's type.</summary>
@@ -103,7 +120,7 @@ public static class SkyPicker
             var (az, alt) = SkyView.ToAzAlt(view.ToHorizontal(s.Position));
             var label = starNames.TryGetValue(s.Hip, out var name) ? name.Name : $"HIP {s.Hip}";
             var detail = name?.Constellation is string c ? $"Star, {c}" : "Star";
-            Consider(new SkyObject(SkyObjectKind.Star, label, detail, az, alt, s.Magnitude, null, s.Hip), d, s.Magnitude);
+            Consider(new SkyObject(SkyObjectKind.Star, label, detail, az, alt, s.Magnitude, null, s.Hip, s.Position), d, s.Magnitude);
         }
 
         for (int i = 0; i < deepSky.Count; i++)
@@ -119,7 +136,7 @@ public static class SkyPicker
             var names = i < deepSkyNames.Count ? deepSkyNames[i] : null;
             var detail = names?.Constellation is string c ? $"{TypeName(o.Type)}, {c}" : TypeName(o.Type);
             // inside its own outline counts as on top of it
-            Consider(new SkyObject(SkyObjectKind.DeepSky, names?.Label ?? $"Deep-sky object {i + 1}", detail, az, alt, o.Magnitude), d <= outline ? 0.5 * d : d, Math.Min(o.Magnitude, 8));
+            Consider(new SkyObject(SkyObjectKind.DeepSky, names?.Label ?? $"Deep-sky object {i + 1}", detail, az, alt, o.Magnitude, null, 0, o.Position), d <= outline ? 0.5 * d : d, Math.Min(o.Magnitude, 8));
         }
         return best;
     }

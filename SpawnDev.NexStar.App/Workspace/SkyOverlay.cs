@@ -28,6 +28,12 @@ public sealed class SkyOverlay : UIElement
     public bool ShowConstellationNames { get; set; } = true;
     public bool ShowSolarSystem { get; set; } = true;
 
+    /// <summary>Where the telescope points, true azimuth and altitude (null when unknown or the frame is not set up).</summary>
+    public (double Azimuth, double Altitude)? TelescopePointing { get; set; }
+
+    /// <summary>The picked object, ringed on the chart.</summary>
+    public SkyObject? Selected { get; set; }
+
     public SkyOverlay(SkyView view, SkyData data)
     {
         _view = view;
@@ -50,6 +56,8 @@ public sealed class SkyOverlay : UIElement
         if (ShowConstellationNames) DrawConstellationNames(renderer);
         if (ShowStarNames) DrawStarNames(renderer);
         if (ShowSolarSystem) DrawSolarSystem(renderer);
+        DrawSelected(renderer);
+        DrawTelescope(renderer);
         base.Draw(renderer);
     }
 
@@ -167,6 +175,28 @@ public sealed class SkyOverlay : UIElement
             r.DrawRoundedRing((float)sx - radiusPx * 1.9f, (float)sy - radiusPx * 1.9f, radiusPx * 3.8f, radiusPx * 3.8f, radiusPx * 1.9f, 2f, Tone(255, 80, 40));
             Label(r, "Sun - never point the telescope here", sx, sy, radiusPx * 1.9f, Tone(255, 120, 70));
         }
+    }
+
+    private void DrawSelected(UIRenderer r)
+    {
+        if (Selected is not { } o || !_view.TryProject(o.Direction, out var x, out var y) || !OnScreen(x, y, 40)) return;
+        const float radius = 17f;
+        var color = Tone(255, 255, 255, 235);
+        r.DrawRoundedRing((float)x - radius, (float)y - radius, radius * 2, radius * 2, radius, 2f, color);
+    }
+
+    /// <summary>The telescope's aim: a ring with a gap at each side, so the thing it points at stays visible in the middle.</summary>
+    private void DrawTelescope(UIRenderer r)
+    {
+        if (TelescopePointing is not { } p || !_view.TryProject(SkyView.FromAzAlt(p.Azimuth, p.Altitude), out var x, out var y) || !OnScreen(x, y, 40)) return;
+        var color = Tone(90, 255, 120, 245);
+        const float radius = 15f;
+        r.DrawRoundedRing((float)x - radius, (float)y - radius, radius * 2, radius * 2, radius, 2f, color);
+        float fx = (float)x, fy = (float)y;
+        r.DrawRect(fx - radius - 9, fy - 1, 7, 2, color);
+        r.DrawRect(fx + radius + 2, fy - 1, 7, 2, color);
+        r.DrawRect(fx - 1, fy - radius - 9, 2, 7, color);
+        r.DrawRect(fx - 1, fy + radius + 2, 2, 7, color);
     }
 
     private void Marker(UIRenderer r, AzAltCoordinates aa, string name, Color color, float radius)

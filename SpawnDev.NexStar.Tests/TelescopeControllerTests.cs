@@ -267,4 +267,38 @@ public class TelescopeControllerTests
         await loop;
         Check.That(Count(rig.Mount, "z") - before >= 4, $"the loop polled {Count(rig.Mount, "z") - before} times in 1.2 s");
     }
+
+    [TestMethod]
+    public async Task AReleaseThatArrivesWhileTheSlewIsStarting_StillStopsIt()
+    {
+        var rig = await Rig.StartAsync(10, 0);
+        // press and release in the same breath, as a quick tap does: the stop must not run before the start and leave the mount turning
+        var begin = rig.Controller.BeginPadAsync(PadDirection.Right, SlewRate.Rate7);
+        var end = rig.Controller.EndPadAsync();
+        await Task.WhenAll(begin, end);
+        await Task.Delay(200);
+        var a = rig.Mount.TrueNow();
+        await Task.Delay(400);
+        Check.Near(a, rig.Mount.TrueNow(), 0.01, "the mount is not turning");
+        Check.That(rig.Controller.PadHeld == null, "nothing is held");
+        Check.That(!rig.Service.GuardedMotionActive, "no guarded motion is left running");
+    }
+
+    [TestMethod]
+    public async Task ManyQuickTaps_NeverLeaveTheMountTurning()
+    {
+        var rig = await Rig.StartAsync(10, 0);
+        for (int i = 0; i < 6; i++)
+        {
+            var begin = rig.Controller.BeginPadAsync(i % 2 == 0 ? PadDirection.Right : PadDirection.Left, SlewRate.Rate6);
+            await Task.Delay(i * 7);
+            await rig.Controller.EndPadAsync();
+            await begin;
+        }
+        await Task.Delay(300);
+        var a = rig.Mount.TrueNow();
+        await Task.Delay(400);
+        Check.Near(a, rig.Mount.TrueNow(), 0.01, "the mount is not turning after six quick taps");
+        Check.That(rig.Controller.PadHeld == null && !rig.Service.GuardedMotionActive, "nothing held, nothing running");
+    }
 }

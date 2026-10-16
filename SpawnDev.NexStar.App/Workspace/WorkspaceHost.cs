@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Components;
 using SpawnDev.GameUI;
 using SpawnDev.NexStar.App.Services;
 using SpawnDev.NexStar.Sky;
+using SkyObject = SpawnDev.NexStar.Sky.SkyObject;
 using SpawnDev.SpawnJS;
 using SpawnDev.SpawnJS.JSObjects;
 
@@ -31,6 +32,19 @@ public sealed class WorkspaceHost : IDisposable
     private SkyRenderer? _skyRenderer;
     private SkyOverlay? _overlay;
     private SkyInteraction? _interaction;
+
+    private TelescopeController? _scope;
+    private CancellationTokenSource? _runCts;
+    private ActionCallback<Event>? _releaseCallback;
+    private List<SkyObject> _solar = new();
+    private double _sinceSolar = 10;
+    private SkyObject? _selected;
+    private string? _cardNote;
+    private bool _gotoBusy;
+    private Storage? _storage;
+
+    private const string PointingKey = "nexstar.pointing";
+    private const string CableKey = "nexstar.cable";
 
     private bool _running;
     private double _lastTimestamp;
@@ -82,12 +96,14 @@ public sealed class WorkspaceHost : IDisposable
             _hud = new WorkspaceUi(_mount, _location);
             _hud.ConnectRequested += useUsb => _ = ConnectAsync(useUsb);
             _hud.DisconnectRequested += () => _ = _mount.DeselectPortAsync();
+            StartTelescope();
 
             // the catalogs: fetched in the browser and uploaded straight to the GPU
             _skyData = await SkyData.LoadAsync(_js, _device, _queue, "data");
             _skyRenderer = new SkyRenderer(_device, _queue, format, _skyData) { NightMode = true };
             _overlay = new SkyOverlay(_sky, _skyData) { NightMode = true };
             _interaction = new SkyInteraction(_sky, _hud.Root);
+            _interaction.Tapped += OnTapped;
             _sky.LookAt(180, 35);
             _sky.FovDegrees = 100;
             ApplyDeeplink();
@@ -114,6 +130,131 @@ public sealed class WorkspaceHost : IDisposable
             Status = $"Could not start: {ex.Message}";
             Console.WriteLine($"[Workspace] {ex}");
         }
+    }
+
+    private void StartTelescope()
+    {
+        _scope = new TelescopeController(_mount);
+        try { _storage = _window?.LocalStorage; } catch { _storage = null; }
+
+        // what survives a reload: the pointing offsets, and where the cable was (the guard re-checks it against the clock on the first reading)
+        _scope.SetPointing(PointingModel.FromJson(ReadStored(PointingKey)));
+        if (CableState.FromJson(ReadStored(CableKey)) is { } saved) _mount.Cable.Restore(saved);
+        _mount.Cable.StateChanged += SaveCable;
+
+        var hud = _hud!;
+        hud.Dock.PadPressed += (direction, rate) => _ = _scope.BeginPadAsync(direction, rate);
+        hud.Dock.PadReleased += () => _ = _scope.EndPadAsync();
+        hud.Dock.StopClicked += () => _ = _scope.StopAsync();
+        hud.Dock.TrackingChanged += on => _ = _mount.SetTrackingModeAsync(on ? TrackingMode.AltAz : TrackingMode.Off);
+        hud.Dock.UnwindClicked += () => _ = UnwindAsync();
+        hud.Dock.CableCenteredClicked += CableCentered;
+        hud.Card.GotoClicked += () => _ = GotoSelectedAsync();
+        hud.Card.CenterClicked += () => { if (_selected is { } o) _sky.LookAt(o.Azimuth, o.Altitude); };
+        hud.Card.AlignClicked += () => _ = AlignSelectedAsync();
+        hud.Card.CloseClicked += () => { _selected = null; _cardNote = null; };
+
+        // a held button must never outlive the page's attention: losing focus or leaving counts as letting go
+        _releaseCallback = new ActionCallback<Event>(_ => ReleaseHolds());
+        _window!.AddEventListener("blur", _releaseCallback);
+        _window.AddEventListener("pagehide", _releaseCallback);
+
+        _runCts = new CancellationTokenSource();
+        _ = _scope.RunAsync(_runCts.Token);
+    }
+
+    private string? ReadStored(string key)
+    {
+        try { return _storage?.GetItem(key); } catch { return null; }
+    }
+
+    private void WriteStored(string key, string value)
+    {
+        try { _storage?.SetItem(key, value); } catch { }
+    }
+
+    private void SaveCable() => WriteStored(CableKey, _mount.Cable.State.ToJson());
+
+    private void ReleaseHolds()
+    {
+        _hud?.Dock.ReleaseAll();
+        if (_scope != null) _ = _scope.EndPadAsync();
+    }
+
+    private void OnTapped(System.Numerics.Vector2 position)
+    {
+        if (_skyData == null) return;
+        _selected = SkyPicker.Pick(_sky, position.X, position.Y, 20, _skyData.BrightStars, _skyData.StarNames, _skyData.DeepSky, _skyData.DeepSkyNames, _solar);
+        _cardNote = null;
+    }
+
+    /// <summary>The picked object's position is the chart's; the telescope needs it for now. If the chart shows another time, say so instead of sending it wrong.</summary>
+    private bool ChartIsNow(out string note)
+    {
+        var late = Math.Abs((_sky.Utc - DateTime.UtcNow).TotalSeconds) > 90;
+        note = late ? "The chart is not showing the current time: positions would be wrong for the telescope." : "";
+        return !late;
+    }
+
+    private async Task GotoSelectedAsync()
+    {
+        if (_selected is not { } o || _scope == null || _gotoBusy) return;
+        if (!ChartIsNow(out var note)) { _cardNote = note; return; }
+        _gotoBusy = true;
+        _cardNote = $"Going to {o.Name}...";
+        try
+        {
+            var result = await _scope.GotoAsync(o.Azimuth, o.Altitude, _sky.Latitude, _sky.Longitude, DateTime.UtcNow);
+            _cardNote = result.Success ? $"At {o.Name}." : result.Message;
+        }
+        finally { _gotoBusy = false; }
+    }
+
+    private async Task AlignSelectedAsync()
+    {
+        if (_selected is not { } o || _scope == null) return;
+        if (!ChartIsNow(out var note)) { _cardNote = note; return; }
+        if (await _scope.AlignHereAsync(o.Azimuth, o.Altitude))
+        {
+            WriteStored(PointingKey, _scope.Pointing.ToJson());
+            _cardNote = $"Aligned on {o.Name}. Go to now uses this.";
+        }
+        else
+        {
+            _cardNote = _scope.Message;
+        }
+    }
+
+    private async Task UnwindAsync()
+    {
+        var result = await _mount.UnwindCableAsync();
+        _scope!.SetMessage(result.Success ? "The cable is back at neutral." : result.Message);
+    }
+
+    private void CableCentered()
+    {
+        var p = _mount.CurrentAzAlt;
+        if (p == null) { _scope?.SetMessage("The mount's position is not known yet."); return; }
+        _mount.Cable.SetNeutral(p.Azimuth, DateTime.UtcNow);
+        _scope?.SetMessage("The cable is now counted from here.");
+    }
+
+    private DockState BuildDockState()
+    {
+        var mp = _mount.CurrentAzAlt;
+        return new DockState
+        {
+            Connected = _mount.ComsEnabled,
+            Title = $"{_mount.Model.GetDisplayName()} {_mount.Version}",
+            Aligned = _mount.IsAligned,
+            HasFrame = _scope?.HasFrame ?? false,
+            TruePointing = _scope?.HasFrame == true ? _scope.TruePointing() : null,
+            MountPointing = mp != null ? (mp.Azimuth, mp.Altitude) : null,
+            Tracking = _mount.CurrentTrackingMode != TrackingMode.Off,
+            Moving = _mount.GuardedMotionActive,
+            Message = _scope?.Message,
+            Cable = _mount.Cable,
+        };
     }
 
     private void ApplyDeeplink()
@@ -186,7 +327,19 @@ public sealed class WorkspaceHost : IDisposable
 
             _ui.Update(dt);
             _interaction?.Update(_ui.Input);
-            _hud.Refresh(dt, _sky, _location.Location != null);
+            // the Moon and planets move and the sky turns: keep the picked object where it is now
+            _sinceSolar += dt;
+            if (_sinceSolar >= 1.0)
+            {
+                _sinceSolar = 0;
+                _solar = SkyPicker.SolarSystem(_sky);
+                if (_selected != null) _selected = SkyPicker.Refresh(_selected, _sky, _solar);
+            }
+            if (_scope?.PadHeld != null) _scope.Heartbeat();
+            _overlay!.Selected = _selected;
+            _overlay.TelescopePointing = _scope?.HasFrame == true ? _scope.TruePointing() : null;
+            _hud.Card.Show(_selected, _mount.ComsEnabled, _mount.IsAligned, _cardNote);
+            _hud.Refresh(dt, _sky, _location.Location != null, BuildDockState());
 
             using var texture = _context.GetCurrentTexture();
             using var view = texture.CreateView();
@@ -214,6 +367,18 @@ public sealed class WorkspaceHost : IDisposable
     public void Dispose()
     {
         _running = false;
+        _runCts?.Cancel();
+        _runCts?.Dispose();
+        _runCts = null;
+        _mount.Cable.StateChanged -= SaveCable;
+        if (_scope != null) _ = _scope.StopAsync();
+        if (_releaseCallback != null && _window != null)
+        {
+            _window.RemoveEventListener("blur", _releaseCallback);
+            _window.RemoveEventListener("pagehide", _releaseCallback);
+        }
+        _releaseCallback?.Dispose();
+        _releaseCallback = null;
         _frameCallback?.Dispose();
         _frameCallback = null;
         _skyRenderer?.Dispose();

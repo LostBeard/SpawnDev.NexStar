@@ -6,8 +6,8 @@ using SpawnDev.NexStar.App.Services;
 namespace SpawnDev.NexStar.App.Workspace;
 
 /// <summary>
-/// The workspace's HUD: one tree drawn by GameUI over the sky. A top bar with the connection, where the scope points, the cable and the time;
-/// everything else (side docks, the object card, time controls) is added here as it is built.
+/// The workspace's HUD: one tree drawn by GameUI over the sky. A top bar with the connection, where the scope points, the cable and the time; the
+/// telescope dock on the right; the card for the picked object at the bottom left; the chart's view line at the bottom.
 /// </summary>
 public sealed class WorkspaceUi
 {
@@ -26,11 +26,17 @@ public sealed class WorkspaceUi
     private readonly UIButton _serial = new() { Text = "Connect", Width = 96, Height = 30 };
     private readonly UIButton _usb = new() { Text = "Connect USB", Width = 118, Height = 30 };
     private readonly UIButton _disconnect = new() { Text = "Disconnect", Width = 104, Height = 30 };
+    private readonly UIButton _dockToggle = new() { Text = "Telescope", Width = TelescopeDock.Width, Height = 30 };
     private double _sinceRefresh = 1;
     private int _width, _height;
+    private bool _dockOpen = true;
+    private bool _dockChosen;
 
     /// <summary>The element to register as the HUD screen.</summary>
     public UIElement Root => _root;
+
+    public TelescopeDock Dock { get; } = new();
+    public SelectionCard Card { get; } = new();
 
     /// <summary>Raised when the user asks to connect. The argument is true for WebUSB.</summary>
     public event Action<bool>? ConnectRequested;
@@ -44,6 +50,9 @@ public sealed class WorkspaceUi
 
         _root.AddAnchored(_topBar, Anchor.TopLeft);
         _root.AddAnchored(_viewInfo, Anchor.BottomLeft, offsetX: 14, offsetY: -12);
+        _root.AddAnchored(Card.Root, Anchor.BottomLeft, offsetX: 14, offsetY: -(SelectionCard.Height + 40));
+        _root.AddAnchored(_dockToggle, Anchor.TopRight, offsetX: -12, offsetY: BarHeight + 10);
+        _root.AddAnchored(Dock.Root, Anchor.TopRight, offsetX: -12, offsetY: BarHeight + 46);
         _topBar.AddChild(_title);
         _topBar.AddChild(_connection);
         _topBar.AddChild(_position);
@@ -56,6 +65,14 @@ public sealed class WorkspaceUi
         _serial.OnClick = () => ConnectRequested?.Invoke(false);
         _usb.OnClick = () => ConnectRequested?.Invoke(true);
         _disconnect.OnClick = () => DisconnectRequested?.Invoke();
+        _dockToggle.OnClick = () => { _dockOpen = !_dockOpen; _dockChosen = true; ApplyDock(); };
+    }
+
+    private void ApplyDock()
+    {
+        Dock.Root.Visible = _dockOpen;
+        _dockToggle.Text = _dockOpen ? "Hide telescope" : "Telescope";
+        if (!_dockOpen) Dock.ReleaseAll();
     }
 
     /// <summary>Lays the HUD out for a viewport in CSS pixels.</summary>
@@ -78,10 +95,14 @@ public sealed class WorkspaceUi
         _disconnect.X = _serial.X;
 
         _topBar.Height = narrow ? BarHeight + 18 : BarHeight;
+
+        // the dock opens by default only where it leaves room for the sky; a person's own choice sticks
+        if (!_dockChosen) _dockOpen = width >= 900 && height >= TelescopeDock.Height + BarHeight + 60;
+        ApplyDock();
     }
 
     /// <summary>Per-frame: updates the readouts a few times a second.</summary>
-    public void Refresh(float dt, SpawnDev.NexStar.Sky.SkyView sky, bool locationKnown)
+    public void Refresh(float dt, SpawnDev.NexStar.Sky.SkyView sky, bool locationKnown, DockState dock)
     {
         _sinceRefresh += dt;
         if (_sinceRefresh < 0.25) return;
@@ -113,5 +134,7 @@ public sealed class WorkspaceUi
         _clock.Text = (notNow ? shown.ToString("yyyy-MM-dd HH:mm") : shown.ToString("HH:mm:ss")) + " UTC";
         _viewInfo.Text = $"Az {sky.CenterAzimuth:F1}°  Alt {sky.CenterAltitude:F1}°   FOV {sky.FovDegrees:F1}°   mag {sky.MagnitudeLimit:F1}"
             + (locationKnown ? "" : "   (location not known: using a default)");
+
+        Dock.Refresh(dock);
     }
 }

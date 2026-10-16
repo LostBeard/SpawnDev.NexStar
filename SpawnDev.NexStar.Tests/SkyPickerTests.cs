@@ -199,4 +199,29 @@ public class SkyPickerTests
         var picked = Pick(wide, sx, sy);
         Check.That(picked == null || picked.CatalogNumber != faint.Hip, "a star too faint for this view is not picked");
     }
+
+    [TestMethod]
+    public void ASelectedObject_FollowsTheSky_AsTimePasses()
+    {
+        var d = Data.Value;
+        var vega = d.Stars.First(s => s.Hip == 91262);
+        var t0 = new DateTime(2026, 7, 15, 3, 0, 0, DateTimeKind.Utc);
+        var view0 = NewView(180, 40, 60, t0);
+        var (az0, alt0) = SkyView.ToAzAlt(view0.ToHorizontal(vega.Position));
+        var picked = new SkyObject(SkyObjectKind.Star, "Vega", "Star, Lyra", az0, alt0, 0.03, null, 91262, vega.Position);
+        var view1 = NewView(180, 40, 60, t0.AddHours(3));
+        var moved = SkyPicker.Refresh(picked, view1, SkyPicker.SolarSystem(view1));
+        var (az1, alt1) = SkyView.ToAzAlt(view1.ToHorizontal(vega.Position));
+        Check.Near(az1, moved.Azimuth, 1e-9, "azimuth after 3 hours"); Check.Near(alt1, moved.Altitude, 1e-9, "altitude after 3 hours");
+        Check.That(Math.Abs(az1 - az0) > 20, $"the sky really turned: {az0:F1} -> {az1:F1}");
+
+        // a planet is found again by name in the new solar system
+        var solar0 = SkyPicker.SolarSystem(view0);
+        var jupiter = solar0.Single(o => o.Name == "Jupiter");
+        var solar1 = SkyPicker.SolarSystem(view1);
+        var jupiterLater = SkyPicker.Refresh(jupiter, view1, solar1);
+        var expected = solar1.Single(o => o.Name == "Jupiter");
+        Check.Near(expected.Azimuth, jupiterLater.Azimuth, 1e-9, "Jupiter azimuth after 3 hours");
+        Check.That(Math.Abs(jupiterLater.Azimuth - jupiter.Azimuth) > 10, "Jupiter moved across the sky too");
+    }
 }
