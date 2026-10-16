@@ -15,6 +15,8 @@
 		<ProjectReference Include="..\SpawnDev.NexStar.Simulator\SpawnDev.NexStar.Simulator.csproj" />
 		<ProjectReference Include="..\SpawnDev.NexStar.Eyepiece\SpawnDev.NexStar.Eyepiece.csproj" />
 		<PackageReference Include="SpawnDev.UnitTesting.Browser" Version="2.7.0" />
+		<!-- an independent decoder, to prove the QR codes we draw really scan -->
+		<PackageReference Include="ZXing.Net" Version="0.16.10" />
 	</ItemGroup>
 
 </Project>

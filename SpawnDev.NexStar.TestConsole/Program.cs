@@ -22,6 +22,7 @@ services.AddSingleton<SkyPickerTests>();
 services.AddSingleton<PointingModelTests>();
 services.AddSingleton<EyepieceProtocolTests>();
 services.AddSingleton<PairingHandshakeTests>();
+services.AddSingleton<QrTests>();
 services.AddSingleton<ViewSettingsTests>();
 services.AddSingleton<TelescopeControllerTests>();
 services.AddSingleton<HardwareReadOnlyTests>();
