@@ -121,6 +121,58 @@ public abstract class ProlificSerial : INexStarTransport
         }
         return prolificSerialPort;
     }
+    /// <summary>
+    /// Opens a Prolific serial port the user has already granted this page, without showing the picker. Null if none was granted or
+    /// the browser has no Web Serial. With more than one granted, the first that answers is used by the caller (the service verifies it).
+    /// </summary>
+    public static async Task<ProlificSerialWebSerial?> OpenGrantedWithWebSerial()
+    {
+        using var Serial = JS.Get<Serial>("navigator.serial");
+        if (Serial == null) return null;
+        try
+        {
+            var ports = await Serial.GetPorts();
+            foreach (var port in ports.ToArray())
+            {
+                var info = port.GetInfo();
+                if (info.UsbVendorId != ProlificVendorId) continue;
+                var prolific = new ProlificSerialWebSerial(port);
+                if (await prolific.OpenAsync()) return prolific;
+                await prolific.DisposeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[NexStar] GetPorts failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Opens a Prolific USB device the user has already granted this page, without showing the picker. Null if none was granted.
+    /// </summary>
+    public static async Task<ProlificSerialWebUSB?> OpenGrantedWithWebUSB()
+    {
+        using var USB = JS.Get<USB>("navigator.usb");
+        if (USB == null) return null;
+        try
+        {
+            var devices = await USB.GetDevices();
+            foreach (var device in devices.ToArray())
+            {
+                if (device.VendorId != ProlificVendorId) continue;
+                var prolific = new ProlificSerialWebUSB(device);
+                if (await prolific.OpenAsync()) return prolific;
+                await prolific.DisposeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[NexStar] GetDevices failed: {ex.GetType().Name}: {ex.Message}");
+        }
+        return null;
+    }
+
     public virtual Task Forget() => Task.CompletedTask;
     public virtual async ValueTask DisposeAsync()
     {

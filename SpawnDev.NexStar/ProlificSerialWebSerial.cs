@@ -109,6 +109,14 @@ public class ProlificSerialWebSerial : ProlificSerial
     }
 
     /// <summary>
+    /// Takes back the permission the user gave this page for the port, so the browser forgets it.
+    /// </summary>
+    public override async Task Forget()
+    {
+        try { await _port.Forget(); } catch { }
+    }
+
+    /// <summary>
     /// Sends a command and returns its payload (see <see cref="INexStarTransport.SendCommandAsync"/>)
     /// </summary>
     public override async Task<byte[]?> SendCommandAsync(byte[] command, int timeoutMs = CommandTimeoutMs)

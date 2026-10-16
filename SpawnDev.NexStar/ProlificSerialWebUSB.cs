@@ -14,6 +14,7 @@ public class ProlificSerialWebUSB : ProlificSerial
     private bool ComsEnabled = false;
     private CancellationTokenSource? _cancelComsTokenSource;
     private Task? _readingTask;
+    private USB? _usb;
 
     /// <summary>Timeout for post-open connection verification (echo test).</summary>
     private const int VerifyTimeoutMs = 2500;
@@ -130,6 +131,10 @@ public class ProlificSerialWebUSB : ProlificSerial
             ComsEnabled = true;
             _cancelComsTokenSource = new CancellationTokenSource();
             _readingTask = ReadLoopAsync(_cancelComsTokenSource.Token);
+
+            // The browser tells us when the cable is pulled; without this the loss is only noticed by the next command timing out
+            _usb = JS.Get<USB>("navigator.usb");
+            _usb.OnDisconnect += Usb_OnDisconnect;
 
             // Allow read loop and device to settle
             await Task.Delay(PostOpenDelayMs);
@@ -447,23 +452,58 @@ public class ProlificSerialWebUSB : ProlificSerial
         _cancelComsTokenSource = null;
         cts?.Cancel();
 
-        var rt = _readingTask;
-        _readingTask = null;
-
-        if (rt != null)
-        {
-            try { await rt; } catch { }
-        }
-
-        cts?.Dispose();
-
+        // Close the device BEFORE waiting for the read loop. The loop sits in transferIn, waiting for bytes that a quiet hand control never sends,
+        // and only closing the device aborts it. Awaiting the loop first waited for ever (the cancellation token is only seen between transfers).
         if (_device != null && _device.Opened)
         {
             try { await _device.Close(); } catch { }
         }
 
+        var rt = _readingTask;
+        _readingTask = null;
+        if (rt != null)
+        {
+            // bounded all the same: a loop that does not end must not hang the disconnect
+            try { await Task.WhenAny(rt, Task.Delay(2000)); } catch { }
+        }
+
+        var usb = _usb;
+        _usb = null;
+        if (usb != null)
+        {
+            try { usb.OnDisconnect -= Usb_OnDisconnect; } catch { }
+            usb.Dispose();
+        }
+
+        cts?.Dispose();
+
         StatusChanged();
         DisconnectedEvent();
+    }
+
+    /// <summary>
+    /// The browser's disconnect event: if it is our device, the link is gone.
+    /// </summary>
+    private void Usb_OnDisconnect(USBConnectionEvent e)
+    {
+        try
+        {
+            using var gone = e.Device;
+            if (gone.VendorId != _device.VendorId || gone.ProductId != _device.ProductId || gone.SerialNumber != _device.SerialNumber) return;
+        }
+        catch
+        {
+            // cannot tell which device it was: with only the one open, assume it was ours
+        }
+        MarkDisconnected();
+    }
+
+    /// <summary>
+    /// Takes back the permission the user gave this page for the device, so the browser forgets it.
+    /// </summary>
+    public override async Task Forget()
+    {
+        try { await _device.Forget(); } catch { }
     }
 
     /// <summary>

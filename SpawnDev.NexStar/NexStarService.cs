@@ -213,6 +213,33 @@ namespace SpawnDev.NexStar
         }
 
         /// <summary>
+        /// Connects to a hand control the browser has already been given permission to use, without the device picker
+        /// (after the first <see cref="SelectPortAsync"/>, or any later page load). False if there is none or it does not answer.
+        /// </summary>
+        public async Task<bool> TryReconnectAsync(bool useWebUSB = false)
+        {
+            if (Transport?.Connected == true) return true;
+            if (JS == null) return false;
+            LastError = null;
+            ProlificSerial? serialPort;
+            try
+            {
+                serialPort = useWebUSB ? await ProlificSerial.OpenGrantedWithWebUSB() : await ProlificSerial.OpenGrantedWithWebSerial();
+            }
+            catch (Exception ex)
+            {
+                LastError = $"{ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+            if (serialPort == null)
+            {
+                LastError = "no device has been granted to this page yet";
+                return false;
+            }
+            return await AttachTransportAsync(serialPort);
+        }
+
+        /// <summary>
         /// Connects over an already open transport and reads the hand control's state.
         /// </summary>
         /// <returns>True if the hand control answered; otherwise the transport is closed and <see cref="LastError"/> says why</returns>
@@ -273,13 +300,26 @@ namespace SpawnDev.NexStar
                 Transport = null;
                 ResetTelescopeState();
                 try { await transport.CloseAsync(); } catch (Exception ex) { LastError = $"{ex.GetType().Name}: {ex.Message}"; }
-                try { await transport.Forget(); } catch { }
                 OnDisconnected?.Invoke(transport);
                 OnStatusChanged?.Invoke();
             }
             finally
             {
                 _disconnecting = false;
+            }
+        }
+
+        /// <summary>
+        /// Disconnects and takes back the browser's permission for this device, so the next connection asks the user again.
+        /// A plain <see cref="DeselectPortAsync"/> keeps the permission.
+        /// </summary>
+        public async Task ForgetDeviceAsync()
+        {
+            var transport = Transport;
+            await DeselectPortAsync();
+            if (transport != null)
+            {
+                try { await transport.Forget(); } catch { }
             }
         }
 
