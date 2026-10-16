@@ -18,6 +18,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\SpawnDev.NexStar\SpawnDev.NexStar.csproj" />
+		<ProjectReference Include="..\SpawnDev.NexStar.Sky\SpawnDev.NexStar.Sky.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

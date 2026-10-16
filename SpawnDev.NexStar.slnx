@@ -2,7 +2,13 @@
   <Project Path="SpawnDev.NexStar.App/SpawnDev.NexStar.App.csproj" />
   <Project Path="SpawnDev.NexStar/SpawnDev.NexStar.csproj" />
   <Project Path="SpawnDev.NexStar.Desktop/SpawnDev.NexStar.Desktop.csproj" />
+  <Project Path="SpawnDev.NexStar.Sky/SpawnDev.NexStar.Sky.csproj" />
+  <Project Path="SpawnDev.NexStar.CatalogBuilder/SpawnDev.NexStar.CatalogBuilder.csproj" />
+  <Project Path="SpawnDev.NexStar.Probe/SpawnDev.NexStar.Probe.csproj" />
+  <Project Path="SpawnDev.NexStar.Shot/SpawnDev.NexStar.Shot.csproj" />
   <Project Path="SpawnDev.NexStar.Tests/SpawnDev.NexStar.Tests.csproj" />
   <Project Path="SpawnDev.NexStar.TestConsole/SpawnDev.NexStar.TestConsole.csproj" />
+  <Project Path="SpawnDev.NexStar.BrowserTests/SpawnDev.NexStar.BrowserTests.csproj" />
+  <Project Path="SpawnDev.NexStar.TestApp/SpawnDev.NexStar.TestApp.csproj" />
   <Project Path="PlaywrightMultiTest/PlaywrightMultiTest.csproj" />
 </Solution>

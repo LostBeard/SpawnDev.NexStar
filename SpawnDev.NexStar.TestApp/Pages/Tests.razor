@@ -1,0 +1,24 @@
+@page "/tests"
+@using System.Reflection
+@using SpawnDev.UnitTesting.Browser
+@using SpawnDev.NexStar.BrowserTests
+
+<PageTitle>NexStar browser tests</PageTitle>
+
+<UnitTestsView TypeInstanceResolver="TestTypeResolver" TestAssemblies="Assemblies" TestTypes="Types"></UnitTestsView>
+
+@code {
+    [Inject]
+    IServiceProvider Services { get; set; } = default!;
+
+    List<Assembly>? Assemblies = new List<Assembly>();
+    List<Type>? Types = new List<Type>();
+
+    object? TestTypeResolver(Type testType) => Services.GetService(testType);
+
+    protected override void OnInitialized()
+    {
+        Types = new List<Type> { typeof(SkyRendererTests) };
+        Assemblies = new List<Assembly> { typeof(SkyRendererTests).Assembly };
+    }
+}

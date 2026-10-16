@@ -1,14 +1,15 @@
 using Microsoft.AspNetCore.Components;
 using SpawnDev.GameUI;
 using SpawnDev.NexStar.App.Services;
+using SpawnDev.NexStar.Sky;
 using SpawnDev.SpawnJS;
 using SpawnDev.SpawnJS.JSObjects;
 
 namespace SpawnDev.NexStar.App.Workspace;
 
 /// <summary>
-/// Owns the workspace's WebGPU device, canvas and render loop. One canvas, one frame loop: the sky is drawn first, then GameUI draws the HUD over it.
-/// Handles are manual in SpawnJS, so everything it creates is disposed in <see cref="Dispose"/>.
+/// Owns the workspace's WebGPU device, canvas and render loop. One canvas, one frame loop: the sky is drawn first (stars, grid, constellations, deep-sky
+/// markers by the GPU), then GameUI draws the labels and the HUD over it. Handles are manual in SpawnJS, so everything it creates is disposed in <see cref="Dispose"/>.
 /// </summary>
 public sealed class WorkspaceHost : IDisposable
 {
@@ -23,7 +24,13 @@ public sealed class WorkspaceHost : IDisposable
     private GPUCanvasContext? _context;
     private Window? _window;
     private ActionCallback<double>? _frameCallback;
+
     private WorkspaceUi? _hud;
+    private readonly SkyView _sky = new();
+    private SkyData? _skyData;
+    private SkyRenderer? _skyRenderer;
+    private SkyOverlay? _overlay;
+    private SkyInteraction? _interaction;
 
     private bool _running;
     private double _lastTimestamp;
@@ -33,6 +40,15 @@ public sealed class WorkspaceHost : IDisposable
 
     /// <summary>What the host is doing, for the page to show when WebGPU is missing.</summary>
     public string Status { get; private set; } = "starting";
+
+    /// <summary>A link's view, site and time, applied at start (null: the normal start: looking south, here, now).</summary>
+    public WorkspaceDeeplink? Deeplink { get; set; }
+
+    private bool _siteFixed;
+    private DateTime? _timeFixed;
+
+    /// <summary>The chart: tests and the page can steer it (look somewhere, set the time).</summary>
+    public SkyView Sky => _sky;
 
     public WorkspaceHost(SpawnJSRuntime js, NexStarService mount, LocationService location)
     {
@@ -66,21 +82,50 @@ public sealed class WorkspaceHost : IDisposable
             _hud = new WorkspaceUi(_mount, _location);
             _hud.ConnectRequested += useUsb => _ = ConnectAsync(useUsb);
             _hud.DisconnectRequested += () => _ = _mount.DeselectPortAsync();
-            _hud.Layout(_cssWidth, _cssHeight);
-            _ui.Screens.Register("hud", _hud.Root);
-            _ui.Screens.SetScreen("hud");
 
-            Console.WriteLine($"[Workspace] WebGPU ready, canvas {_cssWidth}x{_cssHeight} css, ratio {_pixelRatio:F2}");
+            // the catalogs: fetched in the browser and uploaded straight to the GPU
+            _skyData = await SkyData.LoadAsync(_js, _device, _queue, "data");
+            _skyRenderer = new SkyRenderer(_device, _queue, format, _skyData) { NightMode = true };
+            _overlay = new SkyOverlay(_sky, _skyData) { NightMode = true };
+            _interaction = new SkyInteraction(_sky, _hud.Root);
+            _sky.LookAt(180, 35);
+            _sky.FovDegrees = 100;
+            ApplyDeeplink();
+
+            // the overlay first, so every panel draws over it
+            var screen = new UIElement();
+            screen.AddChild(_overlay);
+            screen.AddChild(_hud.Root);
+            _ui.Screens.Register("workspace", screen);
+            _ui.Screens.SetScreen("workspace");
+            ApplyViewport();
+
+            Console.WriteLine($"[Workspace] ready: {_skyData.StarCount} stars, {_skyData.DeepSkyCount} deep-sky objects, canvas {_cssWidth}x{_cssHeight} css, ratio {_pixelRatio:F2}");
             Status = "running";
             _frameCallback = new ActionCallback<double>(OnFrame);
             _running = true;
             _window.RequestAnimationFrame(_frameCallback);
+
+            // where the observer is: the telescope's stored site, or this device's position
+            _ = _location.RequestBrowserLocationAsync();
         }
         catch (Exception ex)
         {
             Status = $"Could not start: {ex.Message}";
             Console.WriteLine($"[Workspace] {ex}");
         }
+    }
+
+    private void ApplyDeeplink()
+    {
+        var d = Deeplink;
+        if (d == null) return;
+        if (d.Latitude is double lat && d.Longitude is double lon) { _sky.Latitude = lat; _sky.Longitude = lon; _siteFixed = true; }
+        _timeFixed = d.Utc;
+        if (d.Fov is double fov) _sky.FovDegrees = Math.Clamp(fov, SkyView.MinFov, SkyView.MaxFov);
+        if (d.Azimuth is double az || d.Altitude is double) _sky.LookAt(d.Azimuth ?? _sky.CenterAzimuth, d.Altitude ?? _sky.CenterAltitude);
+        if (d.Night is bool night) { _skyRenderer!.NightMode = night; _overlay!.NightMode = night; UITheme.Current = night ? NexStarThemes.NightRed : NexStarThemes.Day; }
+        if (d.Layers is SkyLayers layers) _skyRenderer!.Layers = layers;
     }
 
     private async Task ConnectAsync(bool useUsb)
@@ -101,9 +146,17 @@ public sealed class WorkspaceHost : IDisposable
         _canvas.Height = (int)Math.Round(_cssHeight * _pixelRatio);
     }
 
+    private void ApplyViewport()
+    {
+        _ui.SetViewport(_cssWidth, _cssHeight);
+        _hud?.Layout(_cssWidth, _cssHeight);
+        _sky.WidthPx = _cssWidth;
+        _sky.HeightPx = _cssHeight;
+    }
+
     private void OnFrame(double timestamp)
     {
-        if (!_running || _device == null || _queue == null || _context == null || _hud == null || _window == null) return;
+        if (!_running || _device == null || _queue == null || _context == null || _hud == null || _window == null || _skyRenderer == null) return;
         var dt = _lastTimestamp > 0 ? (float)((timestamp - _lastTimestamp) / 1000.0) : 1f / 60f;
         _lastTimestamp = timestamp;
         if (dt > 0.1f) dt = 0.1f;
@@ -118,35 +171,28 @@ public sealed class WorkspaceHost : IDisposable
                 if (w != _cssWidth || h != _cssHeight || Math.Abs(_window.DevicePixelRatio - _pixelRatio) > 1e-6)
                 {
                     MeasureViewport();
-                    _ui.SetViewport(_cssWidth, _cssHeight);
-                    _hud.Layout(_cssWidth, _cssHeight);
+                    ApplyViewport();
                 }
             }
 
+            // where and when: the observer's site and now
+            if (!_siteFixed && _location.Location is { } site)
+            {
+                _sky.Latitude = site.Latitude;
+                _sky.Longitude = site.Longitude;
+            }
+            _sky.Utc = _timeFixed ?? DateTime.UtcNow;
+            _sky.Update();
+
             _ui.Update(dt);
-            _hud.Refresh(dt);
+            _interaction?.Update(_ui.Input);
+            _hud.Refresh(dt, _sky, _location.Location != null);
 
             using var texture = _context.GetCurrentTexture();
             using var view = texture.CreateView();
             using var encoder = _device.CreateCommandEncoder();
-            using (var pass = encoder.BeginRenderPass(new GPURenderPassDescriptor
-            {
-                ColorAttachments = new[]
-                {
-                    new GPURenderPassColorAttachment
-                    {
-                        View = view,
-                        LoadOp = GPULoadOp.Clear,
-                        StoreOp = GPUStoreOp.Store,
-                        ClearValue = new GPUColorDict { R = 0.0, G = 0.0, B = 0.0, A = 1.0 },
-                    }
-                }
-            }))
-            {
-                pass.End();
-            }
 
-            // (the sky is drawn here, before the HUD)
+            _skyRenderer.Render(encoder, view, _sky, _pixelRatio);
 
             _ui.BeginRender(_cssWidth, _cssHeight);
             _ui.Screens.Draw(_ui.Renderer);
@@ -170,6 +216,10 @@ public sealed class WorkspaceHost : IDisposable
         _running = false;
         _frameCallback?.Dispose();
         _frameCallback = null;
+        _skyRenderer?.Dispose();
+        _skyRenderer = null;
+        _skyData?.Dispose();
+        _skyData = null;
         _ui.Dispose();
         _context?.Dispose();
         _context = null;

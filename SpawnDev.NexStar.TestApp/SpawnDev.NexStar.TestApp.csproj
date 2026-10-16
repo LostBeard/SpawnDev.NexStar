@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<CompressionEnabled>false</CompressionEnabled>
+		<PublishTrimmed>false</PublishTrimmed>
+		<RunAOTCompilation>false</RunAOTCompilation>
+		<NoWarn>$(NoWarn);CA1416</NoWarn>
+		<!-- mark as testable by PlaywrightMultiTest -->
+		<PlaywrightMultiTest></PlaywrightMultiTest>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.0" />
+		<PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.0" PrivateAssets="all" />
+		<PackageReference Include="SpawnDev.SpawnJS" Version="3.0.4" />
+		<PackageReference Include="SpawnDev.SpawnJS.Blazor" Version="3.0.4" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SpawnDev.NexStar.BrowserTests\SpawnDev.NexStar.BrowserTests.csproj" />
+	</ItemGroup>
+
+	<!-- the real catalogs, served exactly as the app serves them -->
+	<ItemGroup>
+		<Content Include="..\SpawnDev.NexStar.App\wwwroot\data\**" Link="wwwroot\data\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
+</Project>

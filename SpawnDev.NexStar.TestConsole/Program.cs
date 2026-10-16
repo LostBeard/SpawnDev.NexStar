@@ -17,6 +17,7 @@ services.AddSingleton<CableGuardTests>();
 services.AddSingleton<GuardedMotionTests>();
 services.AddSingleton<AstronomyMathTests>();
 services.AddSingleton<CatalogDataTests>();
+services.AddSingleton<SkyViewTests>();
 services.AddSingleton<HardwareReadOnlyTests>();
 services.AddSingleton<HardwareMotionTests>();
 var sp = services.BuildServiceProvider();

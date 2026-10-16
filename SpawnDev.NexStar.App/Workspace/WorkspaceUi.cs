@@ -22,6 +22,7 @@ public sealed class WorkspaceUi
     private readonly UILabel _position = new() { Text = "", FontSize = FontSize.Body };
     private readonly UILabel _cable = new() { Text = "", FontSize = FontSize.Body };
     private readonly UILabel _clock = new() { Text = "", FontSize = FontSize.Body, Align = TextAlign.Right };
+    private readonly UILabel _viewInfo = new() { Text = "", FontSize = FontSize.Body };
     private readonly UIButton _serial = new() { Text = "Connect", Width = 96, Height = 30 };
     private readonly UIButton _usb = new() { Text = "Connect USB", Width = 118, Height = 30 };
     private readonly UIButton _disconnect = new() { Text = "Disconnect", Width = 104, Height = 30 };
@@ -42,6 +43,7 @@ public sealed class WorkspaceUi
         _location = location;
 
         _root.AddAnchored(_topBar, Anchor.TopLeft);
+        _root.AddAnchored(_viewInfo, Anchor.BottomLeft, offsetX: 14, offsetY: -12);
         _topBar.AddChild(_title);
         _topBar.AddChild(_connection);
         _topBar.AddChild(_position);
@@ -67,7 +69,7 @@ public sealed class WorkspaceUi
 
         var narrow = width < 760;
         _title.X = 14; _title.Y = 12;
-        _connection.X = 100; _connection.Y = 14;
+        _connection.X = 124; _connection.Y = 14;
         _position.X = narrow ? 14 : 330; _position.Y = narrow ? 30 : 14;
         _cable.X = narrow ? 14 : 640; _cable.Y = 14;
         _clock.Width = 150; _clock.X = width - 150 - 14; _clock.Y = 14;
@@ -79,7 +81,7 @@ public sealed class WorkspaceUi
     }
 
     /// <summary>Per-frame: updates the readouts a few times a second.</summary>
-    public void Refresh(float dt)
+    public void Refresh(float dt, SpawnDev.NexStar.Sky.SkyView sky, bool locationKnown)
     {
         _sinceRefresh += dt;
         if (_sinceRefresh < 0.25) return;
@@ -105,6 +107,11 @@ public sealed class WorkspaceUi
         {
             _cable.Text = "";
         }
-        _clock.Text = DateTime.UtcNow.ToString("HH:mm:ss") + " UTC";
+        // the time the chart shows, which is not now when it was set to another time: say so
+        var shown = sky.Utc;
+        var notNow = Math.Abs((shown - DateTime.UtcNow).TotalSeconds) > 5;
+        _clock.Text = (notNow ? shown.ToString("yyyy-MM-dd HH:mm") : shown.ToString("HH:mm:ss")) + " UTC";
+        _viewInfo.Text = $"Az {sky.CenterAzimuth:F1}°  Alt {sky.CenterAltitude:F1}°   FOV {sky.FovDegrees:F1}°   mag {sky.MagnitudeLimit:F1}"
+            + (locationKnown ? "" : "   (location not known: using a default)");
     }
 }

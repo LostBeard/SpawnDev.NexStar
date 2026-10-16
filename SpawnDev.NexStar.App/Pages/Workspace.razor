@@ -7,6 +7,7 @@
 @inject SpawnJSRuntime JS
 @inject NexStarService NexStar
 @inject LocationService LocationService
+@inject NavigationManager Navigation
 
 <PageTitle>NexStar</PageTitle>
 
@@ -20,6 +21,7 @@
     {
         if (!firstRender) return;
         _host = new WorkspaceHost(JS, NexStar, LocationService);
+        _host.Deeplink = WorkspaceDeeplink.Parse(Navigation.Uri);
         await _host.StartAsync(_canvasRef);
     }
 
