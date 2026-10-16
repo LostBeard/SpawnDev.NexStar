@@ -12,6 +12,7 @@ SpawnJSRuntime.EnableIDisposableWatcher = true;
 builder.Services.AddSingleton<SkyRendererTests>();
 builder.Services.AddSingleton<EyepieceLinkTests>();
 builder.Services.AddSingleton<StarDetectorTests>();
+builder.Services.AddSingleton<PlateSolvePipelineTests>();
 
 builder.RootComponents.Add<SpawnDev.NexStar.TestApp.App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
