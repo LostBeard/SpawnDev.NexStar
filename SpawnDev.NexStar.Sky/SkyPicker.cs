@@ -59,6 +59,33 @@ public static class SkyPicker
         return o;
     }
 
+    /// <summary>
+    /// Where the object is, as a function of time, for a tracker: true azimuth and altitude at a site. A star or deep-sky object stays where it is on the
+    /// celestial sphere and the sky turns under it; the Moon and planets also move among the stars. The Sun is not a target.
+    /// </summary>
+    public static SpawnDev.NexStar.TargetFunction TargetFor(SkyObject o, double latitude, double longitude)
+    {
+        if (o.Kind == SkyObjectKind.Sun) throw new ArgumentException("the Sun is never a target", nameof(o));
+        if (o.J2000 is Vector3 fixedPosition)
+        {
+            var view = new SkyView { Latitude = latitude, Longitude = longitude, WidthPx = 100, HeightPx = 100 };
+            return utc =>
+            {
+                lock (view)
+                {
+                    view.Utc = utc;
+                    view.Update();
+                    return SkyView.ToAzAlt(view.ToHorizontal(fixedPosition));
+                }
+            };
+        }
+        if (o.Kind == SkyObjectKind.Moon)
+            return utc => { var m = LunarMath.GetMoonAzAlt(latitude, longitude, utc); return (m.Azimuth, m.Altitude); };
+        if (o.Body is SolarSystemObject body)
+            return utc => { var p = SolarSystemMath.GetAzAlt(body, latitude, longitude, utc); return (p.Azimuth, p.Altitude); };
+        throw new ArgumentException("this object has no position to follow", nameof(o));
+    }
+
     /// <summary>The label for a deep-sky object's type.</summary>
     public static string TypeName(DeepSkyType type) => type switch
     {

@@ -19,23 +19,26 @@ public sealed class SelectionCard
     private readonly UILabel _where = new() { Text = "", FontSize = FontSize.Body, X = 14, Y = 58 };
     private readonly UILabel _coords = new() { Text = "", FontSize = FontSize.Caption, X = 14, Y = 80 };
     private readonly UITextBlock _note = new() { Text = "", FontSize = FontSize.Caption, X = 14, Y = 98, Width = Width - 28, Height = 30, MaxLines = 2 };
-    private readonly UIButton _goto = new() { Text = "Go to", Width = 84, Height = 30, X = 14, Y = 130 };
-    private readonly UIButton _center = new() { Text = "Center", Width = 84, Height = 30, X = 104, Y = 130 };
-    private readonly UIButton _align = new() { Text = "Align here", Width = 110, Height = 30, X = 194, Y = 130 };
+    private readonly UIButton _goto = new() { Text = "Go to", Width = 70, Height = 30, X = 14, Y = 130 };
+    private readonly UIButton _track = new() { Text = "Track", Width = 70, Height = 30, X = 90, Y = 130 };
+    private readonly UIButton _center = new() { Text = "Center", Width = 70, Height = 30, X = 166, Y = 130 };
+    private readonly UIButton _align = new() { Text = "Align here", Width = 104, Height = 30, X = 242, Y = 130 };
     private readonly UIButton _close = new() { Text = "x", Width = 30, Height = 28, X = Width - 40, Y = 8 };
 
     public UIElement Root => _panel;
     public bool IsOpen => _panel.Visible;
 
     public event Action? GotoClicked;
+    public event Action? TrackClicked;
     public event Action? CenterClicked;
     public event Action? AlignClicked;
     public event Action? CloseClicked;
 
     public SelectionCard()
     {
-        foreach (var e in new UIElement[] { _name, _detail, _where, _coords, _note, _goto, _center, _align, _close }) _panel.AddChild(e);
+        foreach (var e in new UIElement[] { _name, _detail, _where, _coords, _note, _goto, _track, _center, _align, _close }) _panel.AddChild(e);
         _goto.OnClick = () => GotoClicked?.Invoke();
+        _track.OnClick = () => TrackClicked?.Invoke();
         _center.OnClick = () => CenterClicked?.Invoke();
         _align.OnClick = () => AlignClicked?.Invoke();
         _close.OnClick = () => CloseClicked?.Invoke();
@@ -45,7 +48,7 @@ public sealed class SelectionCard
     /// <param name="connected">A telescope is connected</param>
     /// <param name="aligned">The hand control has its own alignment</param>
     /// <param name="note">What the last attempt to use the object said, if anything</param>
-    public void Show(SkyObject? o, bool connected, bool aligned, string? note)
+    public void Show(SkyObject? o, bool connected, bool aligned, string? note, bool trackingThis = false, bool hasFrame = true)
     {
         _panel.Visible = o != null;
         if (o == null) return;
@@ -73,5 +76,8 @@ public sealed class SelectionCard
         _goto.Enabled = connected && o.CanGoto && o.Altitude >= 0;
         _align.Visible = connected && !aligned && o.CanGoto;
         _goto.Visible = !isSun;
+        _track.Visible = !isSun;
+        _track.Enabled = connected && o.CanGoto && (trackingThis || (o.Altitude >= 0 && hasFrame));
+        _track.Text = trackingThis ? "Stop" : "Track";
     }
 }

@@ -33,7 +33,7 @@ namespace SpawnDev.NexStar
     /// aligned, refusing the Sun), the press-and-hold slew pad with a dead-man watchdog, and aligning the unaligned mount on a centred object.
     /// The cable guard does the safe routing underneath; this adds the sky.
     /// </summary>
-    public sealed class TelescopeController
+    public sealed partial class TelescopeController
     {
         private readonly NexStarService _mount;
         private readonly object _gate = new();
@@ -94,6 +94,7 @@ namespace SpawnDev.NexStar
             }
             if (!_mount.ComsEnabled) return new GuardedMoveResult(false, Refused("not connected"), null);
             if (_pad != null) return new GuardedMoveResult(false, Refused("a slew button is held"), null);
+            if (IsTracking) await StopTrackingAsync();   // a goto of your own takes over from tracking
             if (!double.IsFinite(azimuth) || !double.IsFinite(altitude)) return new GuardedMoveResult(false, Refused("the target is not a position"), null);
             if (altitude < 0) return new GuardedMoveResult(false, Refused("the target is below the horizon"), null);
             var sun = SunGuard.Refuse(azimuth, altitude, latitude, longitude, utc);
@@ -122,6 +123,7 @@ namespace SpawnDev.NexStar
             CancellationTokenSource? cts;
             lock (_gate) cts = _gotoCts;
             try { cts?.Cancel(); } catch (ObjectDisposedException) { }
+            await StopTrackingAsync();
             await EndPadAsync();
             await _mount.CancelGotoAsync();
             await _mount.StopAllSlewAsync();
@@ -149,6 +151,7 @@ namespace SpawnDev.NexStar
         public async Task<string?> BeginPadAsync(PadDirection direction, SlewRate rate)
         {
             if (!_mount.ComsEnabled) return Message = "not connected";
+            if (IsTracking) await StopTrackingAsync();   // the pad takes over from tracking
             int id;
             lock (_gate)
             {
@@ -234,7 +237,7 @@ namespace SpawnDev.NexStar
                         Message = "the slew was stopped: the page stopped answering";
                         await EndPadAsync();
                     }
-                    if (_mount.ComsEnabled && !_mount.GuardedMotionActive && _pad == null && DateTime.UtcNow - _lastPoll >= PollInterval)
+                    if (_mount.ComsEnabled && !_mount.GuardedMotionActive && _pad == null && !IsTracking && DateTime.UtcNow - _lastPoll >= PollInterval)
                     {
                         _lastPoll = DateTime.UtcNow;
                         await _mount.PollAsync();

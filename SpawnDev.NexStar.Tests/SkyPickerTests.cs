@@ -201,6 +201,38 @@ public class SkyPickerTests
     }
 
     [TestMethod]
+    public void TheTrackingTarget_IsWhereTheChartPutsTheObject_AtEveryTime()
+    {
+        var d = Data.Value;
+        var vega = d.Stars.First(s => s.Hip == 91262);
+        var star = new SkyObject(SkyObjectKind.Star, "Vega", null, 0, 0, 0.03, null, 91262, vega.Position);
+        var target = SkyPicker.TargetFor(star, 40.7484, -73.9857);
+        for (int i = 0; i < 20; i++)
+        {
+            var utc = new DateTime(2026, 7, 15, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i * 37);
+            var view = NewView(180, 40, 60, utc);
+            var (az, alt) = SkyView.ToAzAlt(view.ToHorizontal(vega.Position));
+            var t = target(utc)!.Value;
+            Check.Near(az, t.Azimuth, 1e-9, "azimuth at " + utc); Check.Near(alt, t.Altitude, 1e-9, "altitude at " + utc);
+        }
+        // a planet and the Moon follow their own ephemerides
+        var view0 = NewView(180, 40, 60, new DateTime(2026, 10, 16, 3, 0, 0, DateTimeKind.Utc));
+        var solar = SkyPicker.SolarSystem(view0);
+        var jupiter = solar.Single(o => o.Name == "Jupiter");
+        var jt = SkyPicker.TargetFor(jupiter, view0.Latitude, view0.Longitude)(view0.Utc)!.Value;
+        Check.Near(jupiter.Azimuth, jt.Azimuth, 1e-9, "Jupiter azimuth"); Check.Near(jupiter.Altitude, jt.Altitude, 1e-9, "Jupiter altitude");
+        var moon = solar.Single(o => o.Kind == SkyObjectKind.Moon);
+        var mt = SkyPicker.TargetFor(moon, view0.Latitude, view0.Longitude)(view0.Utc)!.Value;
+        Check.Near(moon.Azimuth, mt.Azimuth, 1e-9, "Moon azimuth");
+        // later, they have moved
+        var later = SkyPicker.TargetFor(jupiter, view0.Latitude, view0.Longitude)(view0.Utc.AddHours(2))!.Value;
+        Check.That(Math.Abs(later.Azimuth - jt.Azimuth) > 5, "the sky turned");
+        // the Sun is never a target
+        var sun = solar.Single(o => o.Kind == SkyObjectKind.Sun);
+        try { SkyPicker.TargetFor(sun, 40, -74); Check.That(false, "the Sun was accepted"); } catch (ArgumentException) { }
+    }
+
+    [TestMethod]
     public void ASelectedObject_FollowsTheSky_AsTimePasses()
     {
         var d = Data.Value;

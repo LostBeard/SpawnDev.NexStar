@@ -27,6 +27,7 @@ services.AddSingleton<PlateSolverTests>();
 services.AddSingleton<MagneticModelTests>();
 services.AddSingleton<ViewSettingsTests>();
 services.AddSingleton<TelescopeControllerTests>();
+services.AddSingleton<TelescopeTrackingTests>();
 services.AddSingleton<HardwareReadOnlyTests>();
 services.AddSingleton<HardwareMotionTests>();
 var sp = services.BuildServiceProvider();

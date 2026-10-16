@@ -15,6 +15,7 @@ public sealed class DockState
     public (double Azimuth, double Altitude)? MountPointing { get; init; }
     public bool Tracking { get; init; }
     public bool Moving { get; init; }
+    public string? TrackingName { get; init; }
     public string? Message { get; init; }
     public CableGuard Cable { get; init; } = new();
 }
@@ -119,7 +120,7 @@ public sealed class TelescopeDock
             _true.Text = $"Az {mp.Azimuth:F2}   Alt {mp.Altitude:F2}";
         else
             _true.Text = "";
-        _mount.Text = s.Connected && !s.HasFrame && s.MountPointing != null ? "mount's own frame: align to point by name" : "";
+        _mount.Text = s.TrackingName != null ? $"tracking {s.TrackingName}" : s.Connected && !s.HasFrame && s.MountPointing != null ? "mount's own frame: align to point by name" : "";
 
         foreach (var b in new UIButton[] { _up, _down, _left, _right, _stop }) b.Enabled = s.Connected;
         _tracking.Enabled = s.Connected;

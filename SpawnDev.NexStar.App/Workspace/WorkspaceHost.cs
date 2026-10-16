@@ -174,6 +174,8 @@ public sealed class WorkspaceHost : IDisposable
         hud.Dock.UnwindClicked += () => _ = UnwindAsync();
         hud.Dock.CableCenteredClicked += CableCentered;
         hud.Card.GotoClicked += () => _ = GotoSelectedAsync();
+        hud.Card.TrackClicked += () => _ = TrackSelectedAsync();
+        _scope.TrackingEnded += why => _cardNote = $"Tracking stopped: {why}";
         hud.Card.CenterClicked += () => { if (_selected is { } o) _sky.LookAt(o.Azimuth, o.Altitude); };
         hud.Card.AlignClicked += () => _ = AlignSelectedAsync();
         hud.Card.CloseClicked += () => { _selected = null; _cardNote = null; };
@@ -357,6 +359,15 @@ public sealed class WorkspaceHost : IDisposable
         finally { _gotoBusy = false; }
     }
 
+    private async Task TrackSelectedAsync()
+    {
+        if (_selected is not { } o || _scope == null) return;
+        if (_scope.IsTracking && _scope.TrackingName == o.Name) { await _scope.StopTrackingAsync(); _cardNote = $"Stopped tracking {o.Name}."; return; }
+        if (!ChartIsNow(out var note)) { _cardNote = note; return; }
+        var problem = await _scope.StartTrackingAsync(o.Name, SkyPicker.TargetFor(o, _sky.Latitude, _sky.Longitude), _sky.Latitude, _sky.Longitude);
+        _cardNote = problem ?? $"Tracking {o.Name}: the telescope follows it with small steps.";
+    }
+
     private async Task AlignSelectedAsync()
     {
         if (_selected is not { } o || _scope == null) return;
@@ -400,6 +411,7 @@ public sealed class WorkspaceHost : IDisposable
             MountPointing = mp != null ? (mp.Azimuth, mp.Altitude) : null,
             Tracking = _mount.CurrentTrackingMode != TrackingMode.Off,
             Moving = _mount.GuardedMotionActive,
+            TrackingName = _scope?.TrackingName,
             Message = _scope?.Message,
             Cable = _mount.Cable,
         };
@@ -508,7 +520,7 @@ public sealed class WorkspaceHost : IDisposable
             _overlay!.Selected = _selected;
             _overlay.PhonePointing = _eyepiece?.ChartPointing;
             _overlay.TelescopePointing = _scope?.HasFrame == true ? _scope.TruePointing() : null;
-            _hud.Card.Show(_selected, _mount.ComsEnabled, _mount.IsAligned, _cardNote);
+            _hud.Card.Show(_selected, _mount.ComsEnabled, _mount.IsAligned, _cardNote, trackingThis: _selected != null && _scope?.IsTracking == true && _scope.TrackingName == _selected.Name, hasFrame: _scope?.HasFrame ?? false);
             _eyepiece?.Update();
             _hud.Eyepiece.UpdateVideo(_eyepiece);
             _hud.Refresh(dt, _sky, _location.Location != null, BuildDockState(), _eyepiece);
