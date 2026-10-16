@@ -263,6 +263,36 @@ public class PlateSolverTests
         Check.Equal(0, solvedWrongly, "a random picture was 'solved' by chance alignments");
     }
 
+    [TestMethod(Timeout = 600000)]
+    public async Task TheAsyncSearch_GivesTheSameAnswer_ReportsProgress_AndCanBeCancelled()
+    {
+        var rng = new Random(444);
+        // a field in the Milky Way, where there are stars enough for a narrow picture
+        List<DetectedStar> det = new(); List<uint> ids = new(); Truth truth = null!;
+        foreach (var (ra, dec) in new[] { (280.0, 0.0), (290.0, 5.0), (270.0, -5.0), (300.0, 10.0), (285.0, -10.0) })
+        {
+            (det, ids, truth) = Render(rng, ra, dec, 20, 6.0, false, 11.0f, 0.4, 0.1, 2);
+            if (ids.Count(i => i != 0) >= 9) break;
+        }
+        Check.That(ids.Count(i => i != 0) >= 9, "the field has stars");
+        var prior = PriorNear(rng, truth.Center, 1.5);
+        var cone = Cone(prior, 1.5 + 2.5 + 1, 11.0f);
+        var options = new PlateSolveOptions { MinArcsecPerPixel = 4.8, MaxArcsecPerPixel = 7.5 };
+        var sync = PlateSolver.SolveSearch(det, cone, prior, 2.0, Width, Height, options);
+        var reports = new List<(int, int)>();
+        var asyncResult = await PlateSolver.SolveSearchAsync(det, cone, prior, 2.0, Width, Height, options, new Progress<(int, int)>(r => reports.Add(r)));
+        Check.That(sync != null && asyncResult != null, "both solved");
+        Check.That(AngleDeg(sync!.Center, asyncResult!.Center) * 3600 < 0.01, "the same centre");
+        Check.Equal(sync.Matches, asyncResult.Matches, "the same matches");
+        await Task.Delay(50);   // Progress<T> reports on the captured context
+        Check.That(reports.Count >= 1 && reports.Last().Item1 == reports.Last().Item2, $"progress ended complete: {reports.Count} reports");
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        try { await PlateSolver.SolveSearchAsync(det, cone, prior, 2.0, Width, Height, options, null, cts.Token); Check.That(false, "a cancelled search ran"); }
+        catch (OperationCanceledException) { }
+    }
+
     [TestMethod]
     public void ThePoissonTail_IsRight()
     {

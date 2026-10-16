@@ -84,14 +84,70 @@ public static class PlateSolver
     public static PlateSolution? SolveSearch(IReadOnlyList<DetectedStar> detections, IReadOnlyList<CatalogEntry> catalog, Vector3 priorCenter, double searchRadiusDegrees, int width, int height, PlateSolveOptions? options = null)
     {
         options ??= new PlateSolveOptions();
+        var centers = PatchCenters(priorCenter, searchRadiusDegrees, width, height, options, out double cosPatch);
+        long trials = 0;
+        foreach (var center in centers)
+        {
+            var patch = new List<CatalogEntry>();
+            foreach (var entry in catalog)
+                if (ToDouble(entry.Direction).Dot(center) >= cosPatch) patch.Add(entry);
+            if (patch.Count < options.MinMatches) continue;
+            var cf = new Vector3((float)center.X, (float)center.Y, (float)center.Z);
+            var solution = SolveCore(detections, patch, cf, width, height, options, ref trials);
+            if (solution != null)
+            {
+                // the patch's catalog indices are positions in the patch: map them back to the catalog handed in
+                var back = solution.Pairs.Select(p => (p.Detection, Catalog: IndexInCatalog(catalog, patch[p.Catalog]))).ToList();
+                return solution with { Pairs = back };
+            }
+            if (trials > options.MaxHypotheses * 8) break;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// <see cref="SolveSearch"/>, handing the thread back between patches so that a page (the browser has one thread) keeps drawing while it works.
+    /// <paramref name="progress"/> is told how many patches are done and how many there are.
+    /// </summary>
+    public static async Task<PlateSolution?> SolveSearchAsync(IReadOnlyList<DetectedStar> detections, IReadOnlyList<CatalogEntry> catalog, Vector3 priorCenter, double searchRadiusDegrees, int width, int height,
+        PlateSolveOptions? options = null, IProgress<(int Done, int Total)>? progress = null, CancellationToken cancellationToken = default)
+    {
+        options ??= new PlateSolveOptions();
+        var centers = PatchCenters(priorCenter, searchRadiusDegrees, width, height, options, out double cosPatch);
+        long trials = 0;
+        for (int i = 0; i < centers.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report((i, centers.Count));
+            var center = centers[i];
+            var patch = new List<CatalogEntry>();
+            foreach (var entry in catalog)
+                if (ToDouble(entry.Direction).Dot(center) >= cosPatch) patch.Add(entry);
+            if (patch.Count >= options.MinMatches)
+            {
+                var cf = new Vector3((float)center.X, (float)center.Y, (float)center.Z);
+                var solution = SolveCore(detections, patch, cf, width, height, options, ref trials);
+                if (solution != null)
+                {
+                    var back = solution.Pairs.Select(p => (p.Detection, Catalog: IndexInCatalog(catalog, patch[p.Catalog]))).ToList();
+                    progress?.Report((centers.Count, centers.Count));
+                    return solution with { Pairs = back };
+                }
+                if (trials > options.MaxHypotheses * 8) break;
+            }
+            await Task.Yield();
+        }
+        return null;
+    }
+
+    private static List<Vector3d> PatchCenters(Vector3 priorCenter, double searchRadiusDegrees, int width, int height, PlateSolveOptions options, out double cosPatch)
+    {
         double fieldRadiusDeg = 0.5 * Math.Sqrt((double)width * width + (double)height * height) * options.MaxArcsecPerPixel / 3600.0;
         double spacing = Math.Max(fieldRadiusDeg * 0.9, 0.05);          // patches overlap so any picture centre is within spacing/2 of some patch centre
         double patchRadiusDeg = fieldRadiusDeg + spacing * 0.75;
-        double cosPatch = Math.Cos(patchRadiusDeg * Math.PI / 180.0);
-
+        cosPatch = Math.Cos(patchRadiusDeg * Math.PI / 180.0);
         var c0 = Normalize(ToDouble(priorCenter));
         var (e0, n0) = Basis(c0);
-        // patch centres on a square grid in the tangent plane about the prior, ordered by distance from it
         var centers = new List<(double Dist, Vector3d Center)>();
         double stepRad = spacing * Math.PI / 180.0, limit = searchRadiusDegrees * Math.PI / 180.0;
         int rings = (int)Math.Ceiling(limit / stepRad);
@@ -103,26 +159,7 @@ public static class PlateSolver
                 centers.Add((r, Unproject(c0, e0, n0, xi, eta)));
             }
         centers.Sort((p, q) => p.Dist.CompareTo(q.Dist));
-
-        long trials = 0;
-        foreach (var (_, center) in centers)
-        {
-            var patch = new List<CatalogEntry>();
-            foreach (var entry in catalog)
-                if (ToDouble(entry.Direction).Dot(center) >= cosPatch) patch.Add(entry);
-            if (patch.Count < options.MinMatches) continue;
-            var cf = new Vector3((float)center.X, (float)center.Y, (float)center.Z);
-            var solution = SolveCore(detections, patch, cf, width, height, options, ref trials);
-            if (solution != null)
-            {
-                // the patch's catalog indices are positions in the patch: map them back to the catalog handed in
-                var map = new Dictionary<uint, int>();
-                var back = solution.Pairs.Select(p => (p.Detection, Catalog: IndexInCatalog(catalog, patch[p.Catalog]))).ToList();
-                return solution with { Pairs = back };
-            }
-            if (trials > options.MaxHypotheses * 8) break;
-        }
-        return null;
+        return centers.Select(c => c.Center).ToList();
     }
 
     private static int IndexInCatalog(IReadOnlyList<CatalogEntry> catalog, CatalogEntry entry)

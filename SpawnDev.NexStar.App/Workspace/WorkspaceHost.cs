@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Components;
 using SpawnDev.GameUI;
 using SpawnDev.NexStar.App.Eyepiece;
 using SpawnDev.NexStar.Eyepiece;
+using SpawnDev.NexStar.Vision;
+using SpawnDev.NexStar.Vision.Gpu;
 using SpawnDev.NexStar.App.Services;
 using SpawnDev.NexStar.Sky;
 using SkyObject = SpawnDev.NexStar.Sky.SkyObject;
@@ -46,6 +48,13 @@ public sealed class WorkspaceHost : IDisposable
     private Storage? _storage;
     private bool _demo;
     private EyepieceViewer? _eyepiece;
+    private StarDetector? _detector;
+    private CatalogCone? _cone;
+    private bool _solving;
+    private PlateSolution? _solution;
+    private DateTime _solutionUtc;
+    private (double Az, double Alt)? _solutionMount;
+    private const string ScaleKey = "nexstar.eyepiece.scale";
     private ViewSettings _settings = new();
     private TimeSpan _timeShift;
     private const string ViewKey = "nexstar.view";
@@ -178,6 +187,8 @@ public sealed class WorkspaceHost : IDisposable
         hud.Eyepiece.PairClicked += () => _ = _eyepiece.PairAsync();
         hud.Eyepiece.UnpairClicked += () => _ = _eyepiece.UnpairAsync();
         hud.Eyepiece.CopyLinkClicked += () => _ = CopyLinkAsync();
+        hud.Eyepiece.SolveClicked += () => _ = SolveEyepieceAsync();
+        hud.Eyepiece.AlignSolutionClicked += () => _ = AlignOnSolutionAsync();
         _ = _eyepiece.StartSavedAsync();
 
         _runCts = new CancellationTokenSource();
@@ -193,6 +204,89 @@ public sealed class WorkspaceHost : IDisposable
         _hud!.Demo = true;
         var simulator = new SpawnDev.NexStar.Simulation.SimulatedMount(scale: 1, startAzimuth: 20, startAltitude: 30);
         if (!await _mount.AttachTransportAsync(simulator)) Console.WriteLine("[Workspace] the simulated telescope did not connect");
+    }
+
+    /// <summary>
+    /// Plate-solves the phone's picture: finds its stars on the GPU, picks the catalog stars around where the telescope is thought to point (also on the
+    /// GPU), and solves. The prior pointing is the telescope's own when it has a frame, else the phone's compass and tilt.
+    /// </summary>
+    private async Task SolveEyepieceAsync()
+    {
+        if (_solving || _eyepiece == null || _skyData?.Stars == null || _device == null || _queue == null) return;
+        var video = _eyepiece.Video;
+        if (video?.View == null || video.Width <= 0) { _hud!.Eyepiece.SetSolveText("There is no picture from the phone yet.", false); return; }
+        if (!ChartIsNow(out var note)) { _hud!.Eyepiece.SetSolveText(note, false); return; }
+
+        (double Az, double Alt)? prior; double uncertainty; string priorName;
+        if (_scope?.HasFrame == true && _scope.TruePointing() is { } scopeAt) { prior = scopeAt; uncertainty = 2.0; priorName = "the telescope's position"; }
+        else if (_eyepiece.ChartPointing is { } phoneAt) { prior = phoneAt; uncertainty = 8.0; priorName = "the phone's compass"; }
+        else { _hud!.Eyepiece.SetSolveText("Nothing says where the telescope points yet: align it on a bright star first, or point the phone's compass (the phone needs a compass and a known site).", false); return; }
+
+        _solving = true;
+        _solution = null;
+        _hud!.Eyepiece.SetSolveText($"Solving from {priorName}...", false);
+        try
+        {
+            _detector ??= new StarDetector(_device, _queue);
+            _cone ??= new CatalogCone(_device, _queue);
+            int w = video.Width, h = video.Height;
+            var capturedUtc = DateTime.UtcNow;
+            var capturedMount = _mount.CurrentAzAlt is { } m ? (m.Azimuth, m.Altitude) : ((double, double)?)null;
+            var detections = await _detector.DetectAsync(video.View, w, h, 64);
+            if (detections.Count < 5) { _hud.Eyepiece.SetSolveText($"Only {detections.Count} stars were found in the picture: it needs at least five. Is the telescope focused, and the exposure long enough?", false); return; }
+
+            // the plate scale: what was solved last time (to within 15%), else anything a phone through an eyepiece could be
+            double? saved = double.TryParse(ReadStored(ScaleKey), System.Globalization.CultureInfo.InvariantCulture, out var sc) ? sc : null;
+            var options = saved is double s0 ? new PlateSolveOptions { MinArcsecPerPixel = s0 * 0.85, MaxArcsecPerPixel = s0 * 1.15 } : new PlateSolveOptions { MinArcsecPerPixel = 0.8, MaxArcsecPerPixel = 25 };
+            double fieldRadius = 0.5 * Math.Sqrt((double)w * w + (double)h * h) * options.MaxArcsecPerPixel / 3600.0;
+            var priorDirection = _sky.ToJ2000(SkyView.FromAzAlt(prior.Value.Az, prior.Value.Alt));
+            float magnitudeLimit = options.MaxArcsecPerPixel > 12 ? 9.5f : 11.5f;
+            var stars = await _cone.SearchAsync(_skyData.Stars, _skyData.StarCount, priorDirection, uncertainty + fieldRadius * 1.5 + 0.5, magnitudeLimit);
+            if (stars.Count < 5) { _hud.Eyepiece.SetSolveText("The catalog has too few stars around there for this picture.", false); return; }
+
+            var progress = new Progress<(int Done, int Total)>(p => _hud.Eyepiece.SetSolveText($"Solving from {priorName}: patch {p.Done + 1} of {p.Total}, {detections.Count} stars in the picture...", false));
+            var solution = await PlateSolver.SolveSearchAsync(detections, stars, priorDirection, uncertainty, w, h, options, progress);
+            if (solution == null)
+            {
+                _hud.Eyepiece.SetSolveText($"No solution: {detections.Count} stars in the picture, {stars.Count} catalog stars near {priorName}. The catalog here is Hipparcos (to about magnitude 11): a narrow eyepiece field may hold too few catalog stars to solve.", false);
+                return;
+            }
+            _solution = solution;
+            _solutionUtc = capturedUtc;
+            _solutionMount = capturedMount;
+            WriteStored(ScaleKey, solution.ArcsecPerPixel.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
+            var ra = AstronomyMath.FormatHMS(solution.RaDegrees / 15.0);
+            var dec = AstronomyMath.FormatDMS(solution.DecDegrees);
+            _hud.Eyepiece.SetSolveText($"Solved: RA {ra}  Dec {dec}\n{solution.ArcsecPerPixel:F2} arcsec/px  roll {solution.RollDegrees:F1}{(solution.Mirrored ? "  mirrored" : "")}  {solution.Matches} stars, rms {solution.RmsPixels:F2} px", !_mount.IsAligned && _mount.ComsEnabled);
+        }
+        catch (Exception ex)
+        {
+            _hud.Eyepiece.SetSolveText("The solve failed: " + ex.Message, false);
+            Console.WriteLine($"[Eyepiece] solve: {ex}");
+        }
+        finally { _solving = false; }
+    }
+
+    /// <summary>Aligns the unaligned telescope on what the picture was solved to be: where it truly pointed when the picture was taken, against where the mount says it points.</summary>
+    private async Task AlignOnSolutionAsync()
+    {
+        if (_solution is not { } s || _scope == null) return;
+        if ((DateTime.UtcNow - _solutionUtc).TotalSeconds > 60) { _hud!.Eyepiece.SetSolveText("That solution is too old: solve again.", false); return; }
+        if (_mount.CurrentAzAlt is { } now && _solutionMount is { } then && (Math.Abs(now.Azimuth - then.Az) > 0.05 || Math.Abs(now.Altitude - then.Alt) > 0.05))
+        { _hud!.Eyepiece.SetSolveText("The telescope has moved since that picture: solve again.", false); return; }
+        // where that sky direction was in the horizon frame at the moment of the picture
+        var at = new SkyView { Latitude = _sky.Latitude, Longitude = _sky.Longitude, Utc = _solutionUtc, WidthPx = 100, HeightPx = 100 };
+        at.Update();
+        var (az, alt) = SkyView.ToAzAlt(at.ToHorizontal(s.Center));
+        if (await _scope.AlignHereAsync(az, alt))
+        {
+            WriteStored(PointingKey, _scope.Pointing.ToJson());
+            _hud!.Eyepiece.SetSolveText($"Aligned: the telescope was pointing at Az {az:F2}  Alt {alt:F2}. Go to now uses this.", false);
+        }
+        else
+        {
+            _hud!.Eyepiece.SetSolveText(_scope.Message ?? "Could not align.", false);
+        }
     }
 
     private async Task CopyLinkAsync()
@@ -442,6 +536,8 @@ public sealed class WorkspaceHost : IDisposable
         _runCts?.Cancel();
         _runCts?.Dispose();
         _runCts = null;
+        _detector?.Dispose(); _detector = null;
+        _cone?.Dispose(); _cone = null;
         if (_eyepiece != null) { _ = _eyepiece.DisposeAsync(); _eyepiece = null; }
         _mount.Cable.StateChanged -= SaveCable;
         if (_scope != null) _ = _scope.StopAsync();

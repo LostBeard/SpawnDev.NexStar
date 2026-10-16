@@ -55,6 +55,11 @@ public sealed class EyepiecePanel
     private readonly UIImage _image = new() { Width = Width - 28, Height = (Width - 28) * 9 / 16, X = 14 };
     private readonly UILabel _pose = new() { Text = "", FontSize = FontSize.Body, X = 14 };
     private readonly UILabel _camera = new() { Text = "", FontSize = FontSize.Caption, X = 14 };
+    private readonly UIButton _solve = new() { Text = "Solve", Width = 90, Height = 30, X = 14 };
+    private readonly UIButton _alignSolution = new() { Text = "Align telescope here", Width = 180, Height = 30, X = 112 };
+    private readonly UITextBlock _solveText = new() { Text = "", FontSize = FontSize.Caption, X = 14, Width = Width - 28, Height = 48, MaxLines = 3 };
+    private string _solveNote = "";
+    private bool _canAlign;
 
     public UIElement Root => _panel;
     public bool IsOpen => _panel.Visible;
@@ -63,13 +68,20 @@ public sealed class EyepiecePanel
     public event Action? PairClicked;
     public event Action? UnpairClicked;
     public event Action? CopyLinkClicked;
+    public event Action? SolveClicked;
+    public event Action? AlignSolutionClicked;
+
+    /// <summary>What the last solve said, and whether its result can be used to align the telescope.</summary>
+    public void SetSolveText(string text, bool canAlign) { _solveNote = text; _canAlign = canAlign; }
 
     public EyepiecePanel()
     {
-        foreach (var e in new UIElement[] { _title, _state, _help, _pair, _copy, _unpair, _qr, _image, _pose, _camera }) _panel.AddChild(e);
+        foreach (var e in new UIElement[] { _title, _state, _help, _pair, _copy, _unpair, _qr, _image, _pose, _camera, _solve, _alignSolution, _solveText }) _panel.AddChild(e);
         _pair.OnClick = () => PairClicked?.Invoke();
         _unpair.OnClick = () => UnpairClicked?.Invoke();
         _copy.OnClick = () => CopyLinkClicked?.Invoke();
+        _solve.OnClick = () => SolveClicked?.Invoke();
+        _alignSolution.OnClick = () => AlignSolutionClicked?.Invoke();
         Refresh(null);
     }
 
@@ -114,6 +126,8 @@ public sealed class EyepiecePanel
         _qr.Visible = hasPairing && state != EyepieceLinkState.Open;
         _image.Visible = state == EyepieceLinkState.Open;
         _pose.Visible = _camera.Visible = state == EyepieceLinkState.Open;
+        _solve.Visible = _alignSolution.Visible = _solveText.Visible = state == EyepieceLinkState.Open;
+        _solveText.Color = t.TextPrimary;
 
         if (!hasPairing)
         {
@@ -147,6 +161,11 @@ public sealed class EyepiecePanel
             var s = viewer?.Status;
             _camera.Text = s != null ? $"{s.Camera}  {s.Width}x{s.Height}" + (s.Battery is double b ? $"   battery {b * 100:F0}%" : "") : "";
             _camera.Y = y; y += 22;
+            _solve.Y = y; _alignSolution.Y = y;
+            _alignSolution.Enabled = _canAlign;
+            y += 38;
+            _solveText.Text = _solveNote;
+            _solveText.Y = y; y += 50;
             _unpair.Y = y; _unpair.X = 14; y += 40;
         }
         _panel.Height = y + 6;
