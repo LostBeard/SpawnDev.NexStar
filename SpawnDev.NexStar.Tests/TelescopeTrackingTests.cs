@@ -11,6 +11,12 @@ public class TelescopeTrackingTests
 {
     private const double Lat = 40.7484, Lon = -73.9857;
 
+    // The tests' sky runs in real time from a fixed NIGHT instant (2026-01-15 03:00 UTC = 22:00 at Lat / Lon), not from the wall clock: the controller refuses
+    // any target near the Sun, so synthetic targets checked against the real time failed by day (Tracking_StopsAtTheCableLimit_NotPastIt at 12:34 on
+    // 2026-11-18: its target at azimuth 199, altitude 40 was 11.9 degrees from the November noon Sun). Targets and the controller read this one clock.
+    private static readonly TimeSpan SkyShift = new DateTime(2026, 1, 15, 3, 0, 0, DateTimeKind.Utc) - DateTime.UtcNow;
+    private static DateTime Sky() => DateTime.UtcNow + SkyShift;
+
     private sealed class Rig
     {
         public readonly SimulatedMount Mount;
@@ -36,6 +42,7 @@ public class TelescopeTrackingTests
             rig.Service.Cable.Confirm(azimuth, ((azimuth % 360) + 360) % 360, DateTime.UtcNow);
             if (withFrame) rig.Controller.Pointing.AlignOn(azimuth, altitude, azimuth, altitude);   // the mount's frame is the true frame here
             rig.Controller.TrackingInterval = TimeSpan.FromMilliseconds(400);
+            rig.Controller.Clock = Sky;
             return rig;
         }
     }
@@ -43,7 +50,7 @@ public class TelescopeTrackingTests
     /// <summary>A target that moves at a steady rate in azimuth from where it is when the test starts.</summary>
     private static TargetFunction Moving(double az0, double alt, double degreesPerSecond)
     {
-        var t0 = DateTime.UtcNow;
+        var t0 = Sky();
         return utc => (((az0 + degreesPerSecond * (utc - t0).TotalSeconds) % 360 + 360) % 360, alt);
     }
 
@@ -55,7 +62,7 @@ public class TelescopeTrackingTests
         Check.That(await rig.Controller.StartTrackingAsync("test target", target, Lat, Lon) == null, $"started: {rig.Controller.Message}");
         Check.That(rig.Controller.IsTracking && rig.Controller.TrackingName == "test target", "tracking");
         await Task.Delay(7000);
-        var expected = target(DateTime.UtcNow)!.Value;
+        var expected = target(Sky())!.Value;
         var at = rig.Mount.TrueNow();
         Check.That(at - 100 > 0.2, $"the mount followed it: azimuth {at:F3}");
         Check.That(Math.Abs(at - expected.Azimuth) < 0.12, $"within 0.12 degrees of the target: mount {at:F3}, target {expected.Azimuth:F3}");
@@ -105,7 +112,7 @@ public class TelescopeTrackingTests
         rig.Controller.Clock = () => noon;
         var onSun = await rig.Controller.StartTrackingAsync("the Sun", utc => { var s = SolarSystemMath.GetAzAlt(SolarSystemObject.Sun, Lat, Lon, utc); return (s.Azimuth, s.Altitude); }, Lat, Lon);
         Check.That(onSun != null && onSun.Contains("Sun"), $"the Sun is refused: {onSun}");
-        rig.Controller.Clock = () => DateTime.UtcNow;
+        rig.Controller.Clock = Sky;
 
         Check.That(await rig.Controller.StartTrackingAsync("t", _ => null, Lat, Lon) != null, "a target with no position");
         Check.That(!rig.Controller.IsTracking, "nothing is tracking");
@@ -121,7 +128,7 @@ public class TelescopeTrackingTests
     public async Task ATargetThatSets_EndsTracking_WithAMessage_AndTheMountStops()
     {
         var rig = await Rig.StartAsync(100, 4);
-        var t0 = DateTime.UtcNow;
+        var t0 = Sky();
         var ended = new TaskCompletionSource<string>();
         rig.Controller.TrackingEnded += why => ended.TrySetResult(why);
         // altitude 4 falling 0.9 degrees a second: below the horizon after a few seconds
