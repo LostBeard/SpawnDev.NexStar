@@ -15,7 +15,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="SpawnDev.RTC" Version="2.3.1" />
+		<PackageReference Include="SpawnDev.RTC" Version="2.4.0" />
 	</ItemGroup>
 
 </Project>
