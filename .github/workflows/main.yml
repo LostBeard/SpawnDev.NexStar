@@ -12,16 +12,23 @@ jobs:
     steps:
     # uses GitHub's checkout action to checkout code form the master branch
     - uses: actions/checkout@v2
-    
+
     # sets up .NET Core SDK
     - name: Setup .NET Core SDK
-      uses: actions/setup-dotnet@v3.0.3
+      uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10'
 
+    # Pin the .NET 10 SDK: ubuntu-latest also ships SDK 11, which `dotnet` picks when there is no global.json, and
+    # its wasm-tools workload has no wasm-tools-net10, so a net10 publish fails with NETSDK1147 (2026-11-16)
+    - name: Pin .NET SDK 10
+      run: |
+        echo '{"sdk":{"version":"10.0.100","rollForward":"latestFeature"}}' > global.json
+        dotnet --version
+
     # Install dotnet wasm buildtools workload
     - name: Install .NET WASM Build Tools
-      run: dotnet workload install wasm-tools wasm-tools-net8        
+      run: dotnet workload install wasm-tools
 
     # publishes Blazor project to the publish-folder
     - name: Publish .NET Core Project
@@ -30,17 +37,17 @@ jobs:
     # changes the base-tag in index.html from '/' to '/SpawnDev.NexStar/' to match GitHub Pages repository subdirectory
     - name: Change base-tag in index.html from / to /SpawnDev.NexStar/
       run: sed -i 's/<base href="\/"/<base href="\/SpawnDev.NexStar\/"/g' publish/wwwroot/index.html
-    
+
     # copy index.html to 404.html to serve the same file when a file is not found
     - name: copy index.html to 404.html
       run: cp publish/wwwroot/index.html publish/wwwroot/404.html
 
     # add .nojekyll file to tell GitHub pages to not treat this as a Jekyll project. (Allow files and folders starting with an underscore)
     - name: Add .nojekyll file
-      run: touch publish/wwwroot/.nojekyll      
-      
+      run: touch publish/wwwroot/.nojekyll
+
     - name: Commit wwwroot to GitHub Pages
       uses: JamesIves/github-pages-deploy-action@v4.4.1
       with:
         branch: gh-pages
-        folder: publish/wwwroot    
+        folder: publish/wwwroot
