@@ -132,6 +132,7 @@ For looking at the app: `SpawnDev.NexStar.Shot` drives a published build in head
 | Constellation figures and borders | Stellarium modern skyculture | CC BY-SA 4.0 |
 | Magnetic declination | NOAA / BGS World Magnetic Model 2025 | Public domain |
 | QR encoder | from SpawnDev.ILGPU (same author), with its format-information bug fixed; checked against [ZXing.Net](https://github.com/micjahn/ZXing.Net) in the tests only | MIT / Apache-2.0 |
+| PL2303 USB-to-serial driver (WebUSB) | init sequence from [pl2303-webusb](https://github.com/Folleon/pl2303-webusb) (Folleon GmbH; based on Tidepool's pl2303) | MIT |
 
 The shipped data files are CC BY-SA 4.0 (see `wwwroot/data/ATTRIBUTION.md`).
 
