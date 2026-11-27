@@ -63,6 +63,21 @@ public sealed class EyepieceSession : IAsyncDisposable
         _config = config ?? new RTCPeerConnectionConfig { IceServers = new[] { new RTCIceServerConfig { Urls = new[] { "stun:stun.l.google.com:19302" } } } };
     }
 
+    // The last control-channel events (what was sent and in which channel state, what arrived and what became of it): a lost message names where it went.
+    // Always on, bounded: a link carries a handful of control messages a second.
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _events = new();
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private void Note(string what)
+    {
+        _events.Enqueue($"{_clock.ElapsedMilliseconds,6} ms {what}");
+        while (_events.Count > 64 && _events.TryDequeue(out _)) { }
+    }
+
+    /// <summary>The last control-channel events of this end (sends with the channel's state, arrivals and whether they were delivered), oldest first.</summary>
+    public string RecentEvents() => string.Join("\n", _events);
+
+    private static string Kind(EyepieceMessage? m) => m?.GetType().Name ?? "undecodable";
+
     private void SetState(EyepieceLinkState state, string? detail = null)
     {
         lock (_lock) { State = state; Detail = detail; }
@@ -190,14 +205,16 @@ public sealed class EyepieceSession : IAsyncDisposable
         var message = EyepieceMessage.Decode(text);
         if (peer.Open)
         {
-            if (message == null) return;
+            if (message == null) { Note($"recv undecodable from {peer.Id}: {(text.Length > 60 ? text[..60] : text)}"); return; }
             // only what the other end is allowed to send
             var allowed = _role == PairingRole.Viewer ? message is EyepieceMessage.Orientation or EyepieceMessage.Status or EyepieceMessage.Bye : message is EyepieceMessage.Command or EyepieceMessage.Bye;
-            if (!allowed) return;
-            if (message is EyepieceMessage.Bye) { _ = ClosePeerAsync(peer, "the other device ended the link"); return; }
+            if (!allowed) { Note($"recv {Kind(message)} from {peer.Id}: not allowed for this role, dropped"); return; }
+            if (message is EyepieceMessage.Bye) { Note($"recv Bye from {peer.Id}"); _ = ClosePeerAsync(peer, "the other device ended the link"); return; }
+            Note($"recv {Kind(message)} from {peer.Id}: delivered");
             MessageReceived?.Invoke(message);
             return;
         }
+        Note($"recv {Kind(message)} from {peer.Id} (peer not open: handshake)");
 
         var h = peer.Handshake;
         if (h == null) return;
@@ -222,10 +239,15 @@ public sealed class EyepieceSession : IAsyncDisposable
         foreach (var t in tracks) TrackReceived?.Invoke(t);
     }
 
-    private static void Send(Peer peer, EyepieceMessage message)
+    private void Send(Peer peer, EyepieceMessage message)
     {
-        try { if (peer.Channel?.ReadyState == "open") peer.Channel.Send(message.Encode()); }
-        catch (Exception ex) { Console.WriteLine($"[Eyepiece] send: {ex.Message}"); }
+        string state = peer.Channel?.ReadyState ?? "no channel";
+        try
+        {
+            if (state == "open") { peer.Channel!.Send(message.Encode()); Note($"send {Kind(message)} to {peer.Id}: sent"); }
+            else Note($"send {Kind(message)} to {peer.Id}: SKIPPED, channel {state}");
+        }
+        catch (Exception ex) { Note($"send {Kind(message)} to {peer.Id}: THREW {ex.GetType().Name}: {ex.Message}"); Console.WriteLine($"[Eyepiece] send: {ex.Message}"); }
     }
 
     /// <summary>Sends a message to the linked device (nothing is sent before the link is open).</summary>
@@ -233,7 +255,7 @@ public sealed class EyepieceSession : IAsyncDisposable
     {
         Peer? peer;
         lock (_lock) peer = _activePeer != null && _peers.TryGetValue(_activePeer, out var p) && p.Open ? p : null;
-        if (peer == null) return false;
+        if (peer == null) { Note($"send {Kind(message)}: no open link, not sent"); return false; }
         Send(peer, message);
         return true;
     }

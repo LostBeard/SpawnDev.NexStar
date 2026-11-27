@@ -58,6 +58,13 @@ public class EyepieceLinkTests
         phone.MessageReceived += m => { if (m is EyepieceMessage.Command c) command.TrySetResult(c); };
         var viewerOpen = WaitFor(viewer, EyepieceLinkState.Open);
         var phoneOpen = WaitFor(phone, EyepieceLinkState.Open);
+        // a message that does not arrive says where it went: both ends' recent control-channel events (Riker, 2026-11-26: once in a full sweep the status sent
+        // right after an orientation that arrived did not arrive within 10 s; 7 of 7 scoped reruns passed)
+        async Task<T> Arrives<T>(Task<T> task, int seconds, string what)
+        {
+            try { return await Within(task, seconds, what); }
+            catch (Exception e) { throw new Exception($"{e.Message}\n--- phone events:\n{phone.RecentEvents()}\n--- viewer events:\n{viewer.RecentEvents()}"); }
+        }
 
         await viewer.StartAsync();
         await phone.StartAsync(camera);
@@ -67,15 +74,15 @@ public class EyepieceLinkTests
 
         // orientation and status, phone to viewer
         Require(phone.Send(new EyepieceMessage.Orientation(1000.5, 271.25, 89.75, -1.5, true, 181.0)), "the phone could send");
-        var o = await Within(orientation.Task, 10, "the orientation arriving");
+        var o = await Arrives(orientation.Task, 10, "the orientation arriving");
         Require(o.Alpha == 271.25 && o.Beta == 89.75 && o.Gamma == -1.5 && o.Absolute && o.CompassHeading == 181.0, $"orientation intact: {o}");
         Require(phone.Send(new EyepieceMessage.Status("Fake camera", 640, 480, 30, 0.9)), "status sent");
-        var s = await Within(status.Task, 10, "the status arriving");
+        var s = await Arrives(status.Task, 10, "the status arriving");
         Require(s.Camera == "Fake camera" && s.Width == 640, $"status intact: {s}");
 
         // a command, viewer to phone
         Require(viewer.Send(new EyepieceMessage.Command("torch", 1)), "the viewer could send");
-        var c = await Within(command.Task, 10, "the command arriving");
+        var c = await Arrives(command.Task, 10, "the command arriving");
         Require(c.Name == "torch" && c.Value == 1, $"command intact: {c}");
 
         // the video: frames really decode on the viewer's end
